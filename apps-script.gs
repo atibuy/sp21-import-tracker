@@ -31,10 +31,12 @@
  */
 
 const SPREADSHEET_ID = '11yVFC71onKOKSsQbDiTbQDCvyY12s067ZMVmS7VFBlE';
+const DRIVE_ROOT_FOLDER = 'SP21';   // root folder ใน Google Drive
 
 const SHEET_SHIPMENTS = 'Shipments';
 const SHEET_ITEMS = 'Items';
 const SHEET_COSTS = 'Costs';
+const SHEET_PHOTOS = 'Photos';
 
 // IMPORTANT: append-only — เพิ่ม column ใหม่ได้ที่ "ท้าย array" เท่านั้น
 // เพื่อให้ index ตรงกับ sheet ที่มีอยู่ (data เก่าจะอยู่ตำแหน่งเดิม)
@@ -73,6 +75,12 @@ const COST_COLS = [
   'allocMethod', 'effectiveAlloc'
 ];
 
+// แต่ละ row = รูป 1 ใบ ที่ผูกกับ shipment+step+category
+const PHOTO_COLS = [
+  'shipmentId', 'step', 'category', 'idx',
+  'fileId', 'url', 'viewUrl', 'thumbUrl', 'name', 'uploadedAt'
+];
+
 /* ================ Web app entry points ================ */
 
 function doGet(e) {
@@ -92,11 +100,13 @@ function doPost(e) {
 
 function handle(req) {
   try {
-    if (req.action === 'list')   return json({ ok: true, data: listShipments() });
-    if (req.action === 'save')   return json({ ok: true, data: upsertShipment(req.payload) });
-    if (req.action === 'delete') return json({ ok: true, data: deleteShipmentById(req.id) });
-    if (req.action === 'init')   return json({ ok: true, data: initSheets() });
-    if (req.action === 'ping')   return json({ ok: true, data: 'pong' });
+    if (req.action === 'list')        return json({ ok: true, data: listShipments() });
+    if (req.action === 'save')        return json({ ok: true, data: upsertShipment(req.payload) });
+    if (req.action === 'delete')      return json({ ok: true, data: deleteShipmentById(req.id) });
+    if (req.action === 'init')        return json({ ok: true, data: initSheets() });
+    if (req.action === 'ping')        return json({ ok: true, data: 'pong' });
+    if (req.action === 'uploadPhoto') return json({ ok: true, data: uploadPhoto(req.payload) });
+    if (req.action === 'deletePhoto') return json({ ok: true, data: deletePhoto(req.payload) });
     return json({ ok: false, error: 'Unknown action: ' + req.action });
   } catch (err) {
     return json({ ok: false, error: String(err && err.message || err), stack: String(err && err.stack || '') });
@@ -136,7 +146,57 @@ function initSheets() {
   getOrCreateSheet(SHEET_SHIPMENTS, SHIPMENT_COLS);
   getOrCreateSheet(SHEET_ITEMS, ITEM_COLS);
   getOrCreateSheet(SHEET_COSTS, COST_COLS);
-  return 'Sheets initialized: ' + [SHEET_SHIPMENTS, SHEET_ITEMS, SHEET_COSTS].join(', ');
+  getOrCreateSheet(SHEET_PHOTOS, PHOTO_COLS);
+  return 'Sheets initialized: ' + [SHEET_SHIPMENTS, SHEET_ITEMS, SHEET_COSTS, SHEET_PHOTOS].join(', ');
+}
+
+/* ================ Drive helpers ================ */
+function getOrCreateFolder(parent, name) {
+  const it = parent.getFoldersByName(name);
+  if (it.hasNext()) return it.next();
+  return parent.createFolder(name);
+}
+function getRootFolder() {
+  return getOrCreateFolder(DriveApp.getRootFolder(), DRIVE_ROOT_FOLDER);
+}
+
+function uploadPhoto(payload) {
+  if (!payload || !payload.shipmentId) throw new Error('shipmentId required');
+  if (!payload.dataUrl) throw new Error('dataUrl required');
+  const containerNo = String(payload.containerNo || payload.shipmentId);
+  const step = String(payload.step || 'misc');
+  const category = String(payload.category || 'general');
+  const m = String(payload.dataUrl).match(/^data:([^;]+);base64,(.+)$/);
+  if (!m) throw new Error('Invalid dataUrl');
+  const mime = m[1];
+  const bytes = Utilities.base64Decode(m[2]);
+  const root = getRootFolder();
+  const containerFolder = getOrCreateFolder(root, containerNo);
+  const subFolder = getOrCreateFolder(containerFolder, step + '_' + category);
+  const ext = (mime.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+  const safeName = (payload.filename ? String(payload.filename) : (Date.now() + '_' + Math.random().toString(36).slice(2, 8))) + '.' + ext;
+  const blob = Utilities.newBlob(bytes, mime, safeName);
+  const file = subFolder.createFile(blob);
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (e) {
+    // workspace บางที่ไม่ให้แชร์ public — ปล่อยผ่าน รูปจะดูได้เฉพาะคนใน org
+  }
+  const fileId = file.getId();
+  return {
+    fileId: fileId,
+    url:      'https://drive.google.com/uc?export=view&id=' + fileId,
+    viewUrl:  'https://drive.google.com/file/d/' + fileId + '/view',
+    thumbUrl: 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w400',
+    name: safeName,
+    uploadedAt: new Date().toISOString()
+  };
+}
+
+function deletePhoto(payload) {
+  if (!payload || !payload.fileId) throw new Error('fileId required');
+  try { DriveApp.getFileById(payload.fileId).setTrashed(true); } catch (e) {}
+  return payload.fileId;
 }
 
 /* ================ List ================ */
@@ -171,20 +231,26 @@ function rowToShipment(row) {
     confirmedAt: toIso(get('confirmedAt')),
     stepA: null, stepB: null, stepC: null, stepD: null, stepE: null
   };
+  const photosByStep = getPhotosFor(s.id);
   if (toBool(get('stepA_completed'))) {
     s.stepA = {
       orderDate: toIso(get('stepA_orderDate')),
       exchangeRate: Number(get('stepA_exchangeRate')) || 0,
       items: getItemsFor(s.id),
+      photos: photosByStep.A || [],
       completed: true
     };
+  } else if ((photosByStep.A || []).length) {
+    s.stepA = { photos: photosByStep.A, completed: false };
   }
   if (toBool(get('stepB_completed'))) {
     s.stepB = {
       shipDate: toIso(get('stepB_shipDate')),
-      photos: [],
+      photos: photosByStep.B || [],
       completed: true
     };
+  } else if ((photosByStep.B || []).length) {
+    s.stepB = { photos: photosByStep.B, completed: false };
   }
   if (toBool(get('stepC_completed'))) {
     s.stepC = {
@@ -193,8 +259,11 @@ function rowToShipment(row) {
       weight: Number(get('stepC_weight')) || 0,
       carrier: get('stepC_carrier') || '',
       transportMode: get('stepC_transportMode') || null,
+      photos: photosByStep.C || [],
       completed: true
     };
+  } else if ((photosByStep.C || []).length) {
+    s.stepC = { photos: photosByStep.C, completed: false };
   }
   if (toBool(get('stepD_completed'))) {
     s.stepD = {
@@ -204,8 +273,11 @@ function rowToShipment(row) {
       vat: Number(get('stepD_vat')) || 0,
       tpiToNim: Number(get('stepD_tpiToNim')) || 0,
       arrivalGroupSize: Number(get('stepD_arrivalGroupSize')) || 1,
+      photos: photosByStep.D || [],
       completed: true
     };
+  } else if ((photosByStep.D || []).length) {
+    s.stepD = { photos: photosByStep.D, completed: false };
   }
   if (toBool(get('stepE_completed'))) {
     s.stepE = {
@@ -214,9 +286,11 @@ function rowToShipment(row) {
       largeBoxes: Number(get('stepE_largeBoxes')) || 0,
       smallRate: Number(get('stepE_smallRate')) || 63,
       largeRate: Number(get('stepE_largeRate')) || 100,
-      photos: [],
+      photos: photosByStep.E || [],
       completed: true
     };
+  } else if ((photosByStep.E || []).length) {
+    s.stepE = { photos: photosByStep.E, completed: false };
   }
   return s;
 }
@@ -266,6 +340,7 @@ function upsertShipment(payload) {
       sheet.getRange(foundIdx + 2, 1, 1, SHIPMENT_COLS.length).setValues([row]);
     }
     replaceItemsFor(s.id, (s.stepA && s.stepA.items) || []);
+    replacePhotosFor(s.id, collectShipmentPhotos(s));
     if (payload.costSnapshot) replaceCostFor(s.id, payload.costSnapshot);
     return s.id;
   } finally {
@@ -389,6 +464,74 @@ function replaceCostFor(shipmentId, c) {
   sheet.getRange(sheet.getLastRow() + 1, 1, 1, COST_COLS.length).setValues([row]);
 }
 
+/* ================ Photos sheet ================ */
+
+function collectShipmentPhotos(s) {
+  const all = [];
+  ['A', 'B', 'C', 'D', 'E'].forEach(function (step) {
+    const stepObj = s['step' + step];
+    const photos = stepObj && stepObj.photos;
+    if (!Array.isArray(photos)) return;
+    photos.forEach(function (p) {
+      if (!p || !p.fileId) return;  // เก็บเฉพาะรูปที่อัปขึ้น Drive แล้ว
+      all.push({
+        step: step,
+        category: p.category || 'general',
+        fileId: p.fileId,
+        url: p.url || '',
+        viewUrl: p.viewUrl || '',
+        thumbUrl: p.thumbUrl || '',
+        name: p.name || '',
+        uploadedAt: p.uploadedAt || ''
+      });
+    });
+  });
+  return all;
+}
+
+function replacePhotosFor(shipmentId, photos) {
+  const sheet = getOrCreateSheet(SHEET_PHOTOS, PHOTO_COLS);
+  if (sheet.getLastRow() >= 2) {
+    const ids = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+    for (let i = ids.length - 1; i >= 0; i--) {
+      if (String(ids[i][0]) === String(shipmentId)) sheet.deleteRow(i + 2);
+    }
+  }
+  if (!photos || photos.length === 0) return;
+  const rows = photos.map(function (p, i) {
+    return [
+      shipmentId, p.step || '', p.category || '', i,
+      p.fileId || '', p.url || '', p.viewUrl || '', p.thumbUrl || '',
+      p.name || '', p.uploadedAt || ''
+    ];
+  });
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, PHOTO_COLS.length).setValues(rows);
+}
+
+function getPhotosFor(shipmentId) {
+  const sheet = getOrCreateSheet(SHEET_PHOTOS, PHOTO_COLS);
+  if (sheet.getLastRow() < 2) return {};
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, PHOTO_COLS.length).getValues();
+  const byStep = { A: [], B: [], C: [], D: [], E: [] };
+  rows
+    .filter(function (r) { return String(r[0]) === String(shipmentId); })
+    .sort(function (a, b) { return (Number(a[3]) || 0) - (Number(b[3]) || 0); })
+    .forEach(function (r) {
+      const step = String(r[1] || '').toUpperCase();
+      if (!byStep[step]) return;
+      byStep[step].push({
+        category: r[2] || 'general',
+        fileId: r[4] || '',
+        url: r[5] || '',
+        viewUrl: r[6] || '',
+        thumbUrl: r[7] || '',
+        name: r[8] || '',
+        uploadedAt: r[9] || ''
+      });
+    });
+  return byStep;
+}
+
 /* ================ Delete ================ */
 
 function deleteShipmentById(id) {
@@ -396,7 +539,7 @@ function deleteShipmentById(id) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
-    [SHEET_SHIPMENTS, SHEET_ITEMS, SHEET_COSTS].forEach(name => {
+    [SHEET_SHIPMENTS, SHEET_ITEMS, SHEET_COSTS, SHEET_PHOTOS].forEach(name => {
       const sheet = ss().getSheetByName(name);
       if (!sheet || sheet.getLastRow() < 2) return;
       const ids = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();

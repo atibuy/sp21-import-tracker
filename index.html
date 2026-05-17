@@ -347,6 +347,28 @@
     cursor: pointer;
   }
   .photo-add input { display: none; }
+  .photo-thumb .view-photo {
+    position: absolute; top: 4px; left: 4px;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: rgba(30,64,175,0.85); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; text-decoration: none;
+  }
+  .photo-cat-block { margin-top: 12px; }
+  .photo-cat-block:first-child { margin-top: 0; }
+  .photo-cat-head {
+    font-size: 13px; font-weight: 600; color: var(--text-secondary);
+    margin-bottom: 6px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .photo-cat-head .count {
+    margin-left: auto; font-size: 11px; color: var(--text-muted); font-weight: 500;
+  }
+  .photo-uploading {
+    display: inline-flex; align-items: center; justify-content: center;
+    aspect-ratio: 1; background: var(--primary-50); color: var(--primary);
+    border-radius: var(--radius-sm); font-size: 12px; font-weight: 500;
+  }
 
   /* Bottom button bar */
   .bottom-bar {
@@ -889,6 +911,174 @@ function compressImage(file, maxDim = 1024, quality = 0.75) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+/* ============ Photo categories + cloud upload ============ */
+const PHOTO_CATEGORIES = {
+  A: [
+    { key: 'invoice', label: 'Invoice จากโรงงาน', icon: '🧾' },
+    { key: 'chat',    label: 'หลักฐานการคุย',     icon: '💬' }
+  ],
+  B: [
+    { key: 'bank_th', label: 'โอนเงินไทย → เจ้าหน้าที่', icon: '🏦' },
+    { key: 'bank_cn', label: 'โอนเงินไปจีน',             icon: '💴' }
+  ],
+  C: [
+    { key: 'tracking', label: 'Tracking จีน', icon: '📍' },
+    { key: 'box',      label: 'ภาพกล่อง',      icon: '📦' },
+    { key: 'order_no', label: 'เลข Order',     icon: '#️⃣' }
+  ],
+  D: [
+    { key: 'tpi_bill',   label: 'บิล TPI',              icon: '🧾' },
+    { key: 'tpi_to_nim', label: 'ใบส่งของ TPI → นิ่ม',  icon: '📋' }
+  ],
+  E: [
+    { key: 'nim_bill', label: 'บิลนิ่มเชียงใหม่', icon: '🧾' }
+  ]
+};
+const PHOTO_CAT_INFO = {};
+Object.values(PHOTO_CATEGORIES).flat().forEach(c => { PHOTO_CAT_INFO[c.key] = c; });
+
+// state ระหว่างกรอกฟอร์ม: { category: [{fileId, url, viewUrl, thumbUrl, name, uploadedAt, category}] }
+let tempPhotosByCategory = {};
+
+function loadTempPhotos(stepData) {
+  tempPhotosByCategory = {};
+  (stepData?.photos || []).forEach(p => {
+    if (!p || !p.fileId) return;  // ข้าม legacy base64 — ใช้เฉพาะรูปที่ขึ้น Drive แล้ว
+    const k = p.category || 'general';
+    (tempPhotosByCategory[k] = tempPhotosByCategory[k] || []).push(p);
+  });
+}
+
+function collectStepPhotos() {
+  const out = [];
+  Object.entries(tempPhotosByCategory).forEach(([cat, list]) => {
+    list.forEach(p => out.push(Object.assign({}, p, { category: cat })));
+  });
+  return out;
+}
+
+async function uploadPhotoToCloud(dataUrl, shipmentId, containerNo, step, category) {
+  return await cloudCall('uploadPhoto', { payload: { shipmentId, containerNo, step, category, dataUrl } });
+}
+
+function renderPhotoCategoryGrid(catKey) {
+  const list = tempPhotosByCategory[catKey] || [];
+  return list.map((p, i) => `
+    <div class="photo-thumb">
+      <img src="${p.thumbUrl || p.url}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.opacity='0.3'">
+      <a class="view-photo" href="${p.viewUrl}" target="_blank" rel="noopener" title="เปิดดูภาพ">↗</a>
+      <button class="delete-photo" onclick="removeCloudPhoto('${catKey}', ${i})">×</button>
+    </div>
+  `).join('');
+}
+
+function renderPhotoCategorySection(step, cat) {
+  return `
+    <div class="photo-cat-block">
+      <div class="photo-cat-head">
+        <span>${cat.icon} ${cat.label}</span>
+        <span class="count" id="count-${cat.key}">${(tempPhotosByCategory[cat.key] || []).length} รูป</span>
+      </div>
+      <div class="photo-grid" id="grid-${cat.key}">${renderPhotoCategoryGrid(cat.key)}</div>
+      <label class="photo-add" style="display:inline-flex;margin-top:8px;width:80px;font-size:24px">
+        <input type="file" accept="image/*" capture="environment" multiple onchange="uploadStepPhotos(this, '${step}', '${cat.key}')">
+        ＋
+      </label>
+    </div>
+  `;
+}
+
+function renderStepPhotosBlock(step) {
+  const cats = PHOTO_CATEGORIES[step] || [];
+  if (cats.length === 0) return '';
+  return `
+    <div class="form-section">
+      <h3>📸 หลักฐาน / รูปภาพ</h3>
+      ${cats.map(c => renderPhotoCategorySection(step, c)).join('')}
+    </div>
+  `;
+}
+
+function refreshCategoryGrid(catKey) {
+  const gridEl = document.getElementById('grid-' + catKey);
+  if (gridEl) gridEl.innerHTML = renderPhotoCategoryGrid(catKey);
+  const countEl = document.getElementById('count-' + catKey);
+  if (countEl) countEl.textContent = (tempPhotosByCategory[catKey] || []).length + ' รูป';
+}
+
+async function uploadStepPhotos(input, step, catKey) {
+  if (!cloudEnabled()) { toast('ต้องตั้งค่า Cloud sync ก่อน', 'error'); input.value = ''; return; }
+  if (!isOnline()) { toast('ต้องออนไลน์เพื่ออัปโหลดรูป', 'error'); input.value = ''; return; }
+  const s = getShipment(state.currentId);
+  const shipmentId = state.currentId;
+  const containerNo = s?.containerNo || s?.id || shipmentId;
+  if (!shipmentId || !containerNo) { toast('ต้องบันทึก Shipment ก่อนถึงอัปโหลดรูปได้', 'error'); input.value = ''; return; }
+  const files = [...input.files];
+  input.value = '';
+  const gridEl = document.getElementById('grid-' + catKey);
+  for (const f of files) {
+    let placeholder;
+    if (gridEl) {
+      placeholder = document.createElement('div');
+      placeholder.className = 'photo-uploading';
+      placeholder.textContent = '⏳';
+      gridEl.appendChild(placeholder);
+    }
+    try {
+      const data = await compressImage(f);
+      const meta = await uploadPhotoToCloud(data, shipmentId, containerNo, step, catKey);
+      const list = (tempPhotosByCategory[catKey] = tempPhotosByCategory[catKey] || []);
+      list.push(Object.assign({ category: catKey }, meta));
+    } catch (e) {
+      console.error(e);
+      toast('อัปโหลดล้มเหลว: ' + (e.message || e), 'error');
+    } finally {
+      if (placeholder && placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
+    }
+  }
+  refreshCategoryGrid(catKey);
+}
+
+function removeCloudPhoto(catKey, idx) {
+  const list = tempPhotosByCategory[catKey];
+  if (!list || !list[idx]) return;
+  const removed = list.splice(idx, 1)[0];
+  refreshCategoryGrid(catKey);
+  if (removed?.fileId && cloudEnabled() && isOnline()) {
+    cloudCall('deletePhoto', { payload: { fileId: removed.fileId } }).catch(() => {});
+  }
+}
+
+function renderPhotosViewerForStep(stepData) {
+  const photos = (stepData?.photos || []).filter(p => p && (p.fileId || typeof p === 'string'));
+  if (photos.length === 0) return '';
+  const byCat = {};
+  photos.forEach(p => {
+    if (typeof p === 'string') {
+      (byCat['legacy'] = byCat['legacy'] || []).push({ url: p, viewUrl: p, thumbUrl: p, name: 'legacy' });
+    } else {
+      const k = p.category || 'general';
+      (byCat[k] = byCat[k] || []).push(p);
+    }
+  });
+  return Object.entries(byCat).map(([catKey, list]) => {
+    const info = PHOTO_CAT_INFO[catKey] || { icon: catKey === 'legacy' ? '🗂️' : '📎', label: catKey === 'legacy' ? 'รูปเดิม' : catKey };
+    return `
+      <div style="margin-top:10px">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">${info.icon} ${escapeHtml(info.label)} · ${list.length} รูป</div>
+        <div class="photo-grid">
+          ${list.map(p => `
+            <a class="photo-thumb" href="${p.viewUrl || p.url}" target="_blank" rel="noopener" title="ดูภาพเต็ม">
+              <img src="${p.thumbUrl || p.url}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.opacity='0.3'">
+              <span class="view-photo" style="pointer-events:none">↗</span>
+            </a>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 /* ============ Renderer ============ */
@@ -1454,30 +1644,33 @@ function renderOwnerDetail() {
       ${itemsHtml}
       <div class="data-row" style="margin-top:6px"><span>รวมยอดหยวน</span><span class="v">¥${fmtBaht((s.stepA?.items||[]).reduce((sum,it)=>sum+(Number(it.yuanAmount)||0),0))}</span></div>
       <div class="data-row"><span>≈ บาท</span><span class="v">${fmtBaht(((s.stepA?.items||[]).reduce((sum,it)=>sum+(Number(it.yuanAmount)||0),0)) * rate)} ฿</span></div>
+      ${renderPhotosViewerForStep(s.stepA)}
     `, 'owner-step-a')}
 
     ${renderStepCard('B', 'จัดส่งจากโรงงาน', s.stepB?.completed, s.stepB ? `
-      <div class="data-row"><span>วันจัดส่ง</span><span class="v">${fmtDate(s.stepB.shipDate)}</span></div>
-      ${s.stepB.photos?.length ? renderPhotoGridStatic(s.stepB.photos) : ''}
+      ${s.stepB.shipDate ? `<div class="data-row"><span>วันจัดส่ง</span><span class="v">${fmtDate(s.stepB.shipDate)}</span></div>` : ''}
+      ${renderPhotosViewerForStep(s.stepB)}
     ` : '<div style="color:var(--text-muted)">ยังไม่ได้บันทึก</div>', 'owner-step-b', status === 'ordered')}
 
     ${renderStepCard('C/F', 'น้ำหนัก / ขนส่ง', s.stepC?.completed, s.stepC ? `
-      <div class="data-row"><span>น้ำหนัก</span><span class="v">${fmtNum(s.stepC.weight)} กก.</span></div>
-      <div class="data-row"><span>จำนวนกล่อง</span><span class="v">${fmtNum(s.stepC.boxes)}</span></div>
-      <div class="data-row"><span>ปริมาตร</span><span class="v">${fmtNum(s.stepC.volume)} คิว</span></div>
-      <div class="data-row"><span>ขนส่งโดย</span><span class="v">${s.stepC.carrier}${s.stepC.transportMode ? ` · ${s.stepC.transportMode === 'land' ? '🚛 ทางรถ' : '🚢 ทางเรือ'}` : ''}</span></div>
+      ${s.stepC.weight ? `<div class="data-row"><span>น้ำหนัก</span><span class="v">${fmtNum(s.stepC.weight)} กก.</span></div>` : ''}
+      ${s.stepC.boxes ? `<div class="data-row"><span>จำนวนกล่อง</span><span class="v">${fmtNum(s.stepC.boxes)}</span></div>` : ''}
+      ${s.stepC.volume ? `<div class="data-row"><span>ปริมาตร</span><span class="v">${fmtNum(s.stepC.volume)} คิว</span></div>` : ''}
+      ${s.stepC.carrier ? `<div class="data-row"><span>ขนส่งโดย</span><span class="v">${s.stepC.carrier}${s.stepC.transportMode ? ` · ${s.stepC.transportMode === 'land' ? '🚛 ทางรถ' : '🚢 ทางเรือ'}` : ''}</span></div>` : ''}
+      ${renderPhotosViewerForStep(s.stepC)}
     ` : '<div style="color:var(--text-muted)">ยังไม่ได้บันทึก</div>', 'owner-step-c', status === 'shipped')}
 
     ${renderStepCard('D', 'ถึงไทย / ค่าใช้จ่าย', s.stepD?.completed, s.stepD ? `
-      <div class="data-row"><span>วันถึงไทย</span><span class="v">${fmtDate(s.stepD.arrivalDate)}</span></div>
-      <div class="data-row"><span>ค่าขนส่งจีน-ไทย</span><span class="v">${fmtBaht(s.stepD.shippingCost)} ฿</span></div>
+      ${s.stepD.arrivalDate ? `<div class="data-row"><span>วันถึงไทย</span><span class="v">${fmtDate(s.stepD.arrivalDate)}</span></div>` : ''}
+      ${s.stepD.shippingCost != null ? `<div class="data-row"><span>ค่าขนส่งจีน-ไทย</span><span class="v">${fmtBaht(s.stepD.shippingCost)} ฿</span></div>` : ''}
       ${s.stepC?.carrier === 'NEXT' ? `
         <div class="data-row"><span>ค่าศุลกากร</span><span class="v">${fmtBaht(s.stepD.customs)} ฿</span></div>
         <div class="data-row"><span>ภาษีมูลค่าเพิ่ม</span><span class="v">${fmtBaht(s.stepD.vat)} ฿</span></div>
       ` : `
-        <div class="data-row"><span>ตู้ที่มาพร้อมกัน</span><span class="v">${fmtNum(s.stepD.arrivalGroupSize ?? 1)} ตู้</span></div>
-        <div class="data-row"><span>ค่าส่ง TPI → นิ่มซี่เส็ง</span><span class="v">${fmtBaht(s.stepD.tpiToNim ?? 100)} ฿</span></div>
+        ${s.stepD.arrivalGroupSize ? `<div class="data-row"><span>ตู้ที่มาพร้อมกัน</span><span class="v">${fmtNum(s.stepD.arrivalGroupSize)} ตู้</span></div>` : ''}
+        ${s.stepD.tpiToNim != null ? `<div class="data-row"><span>ค่าส่ง TPI → นิ่มซี่เส็ง</span><span class="v">${fmtBaht(s.stepD.tpiToNim)} ฿</span></div>` : ''}
       `}
+      ${renderPhotosViewerForStep(s.stepD)}
     ` : '<div style="color:var(--text-muted)">ยังไม่ได้บันทึก</div>', 'owner-step-d', status === 'transit')}
 
     ${renderStepCard('E', 'รับของเข้าคลัง', s.stepE?.completed, s.stepE ? `
@@ -1485,8 +1678,8 @@ function renderOwnerDetail() {
         <div class="data-row"><span>กล่องเล็ก</span><span class="v">${fmtNum(s.stepE.smallBoxes || 0)} × ${fmtBaht(s.stepE.smallRate ?? 63)} ฿</span></div>
         <div class="data-row"><span>กล่องใหญ่</span><span class="v">${fmtNum(s.stepE.largeBoxes || 0)} × ${fmtBaht(s.stepE.largeRate ?? 100)} ฿</span></div>
       ` : ''}
-      <div class="data-row"><span>ค่า Nim Express</span><span class="v">${fmtBaht(s.stepE.nimExpressCost)} ฿</span></div>
-      ${s.stepE.photos?.length ? renderPhotoGridStatic(s.stepE.photos) : ''}
+      ${s.stepE.nimExpressCost != null ? `<div class="data-row"><span>ค่า Nim Express</span><span class="v">${fmtBaht(s.stepE.nimExpressCost)} ฿</span></div>` : ''}
+      ${renderPhotosViewerForStep(s.stepE)}
       ${s.confirmed ? `<div class="data-row" style="color:var(--success)"><span>✓ ยืนยันรับของแล้ว</span><span class="v">${fmtDate(s.confirmedAt)}</span></div>` : ''}
     ` : '<div style="color:var(--text-muted)">ยังไม่ได้บันทึก</div>', 'owner-step-e', status === 'arrived')}
 
@@ -1530,9 +1723,6 @@ function renderStepCard(num, title, completed, body, targetView, isCurrent = fal
       <div class="step-body">${body}</div>
     </div>
   `;
-}
-function renderPhotoGridStatic(photos) {
-  return `<div class="photo-grid" style="margin-top:8px">${photos.map(p => `<div class="photo-thumb"><img src="${p}" alt=""></div>`).join('')}</div>`;
 }
 function gotoStep(view) { state.view = view; render(); }
 
@@ -1590,6 +1780,7 @@ function renderStepA() {
   const s = getShipment(state.currentId);
   if (!s) { back(); return; }
   renderTopbar('Step A: แก้ไขคำสั่งซื้อ');
+  loadTempPhotos(s.stepA);
   document.getElementById('main').innerHTML = `
     <div class="form-section">
       <h3><span class="step-badge">Step A</span> ข้อมูลคำสั่งซื้อ</h3>
@@ -1610,6 +1801,7 @@ function renderStepA() {
       <div id="items-container"></div>
       <button class="add-item-btn" onclick="addItemRow()">＋ เพิ่มกลุ่มสินค้า</button>
     </div>
+    ${renderStepPhotosBlock('A')}
   `;
   renderBottomBar(`
     <button class="btn btn-secondary" onclick="back()">ยกเลิก</button>
@@ -1627,9 +1819,10 @@ function saveStepA() {
   if (!allocMethod) { toast('กรุณาเลือกวิธีแบ่งค่าขนส่ง', 'error'); return; }
   const items = collectItems();
   if (!items) return;
+  const photos = collectStepPhotos();
   if (!updateShipment(state.currentId, s => ({
     ...s, allocMethod,
-    stepA: { orderDate, exchangeRate, items, completed: true }
+    stepA: { orderDate, exchangeRate, items, photos, completed: true }
   }))) return;
   toast('บันทึกเรียบร้อย ✓', 'success');
   state.view = 'owner-detail';
@@ -1641,6 +1834,7 @@ function renderStepB() {
   const s = getShipment(state.currentId);
   if (!s) { back(); return; }
   renderTopbar('Step B: จัดส่งจากโรงงาน');
+  loadTempPhotos(s.stepB);
   document.getElementById('main').innerHTML = `
     <div class="form-section">
       <h3><span class="step-badge">Step B</span> วันที่จัดส่งจากโรงงาน</h3>
@@ -1648,56 +1842,21 @@ function renderStepB() {
         <label>วันที่จัดส่งจากโรงงาน <span class="req">*</span></label>
         <input type="date" id="shipDate" value="${s.stepB?.shipDate || todayISO()}">
       </div>
-      <div class="field">
-        <label>รูปภาพสินค้า/ใบส่งของ</label>
-        <div class="photo-grid" id="photo-grid"></div>
-        <label class="photo-add" style="display:inline-flex;margin-top:8px;width:96px">
-          <input type="file" accept="image/*" capture="environment" multiple onchange="addPhotos(this, 'B')">
-          ＋
-        </label>
-        <div class="field-hint">รูปจะถูกย่อขนาดอัตโนมัติเพื่อประหยัดพื้นที่</div>
-      </div>
     </div>
+    ${renderStepPhotosBlock('B')}
   `;
   renderBottomBar(`
     <button class="btn btn-secondary" onclick="back()">ยกเลิก</button>
     <button class="btn btn-primary" onclick="saveStepB()">💾 บันทึก</button>
   `);
-  tempPhotos = [...(s.stepB?.photos || [])];
-  renderPhotoEditor('photo-grid');
 }
 
-let tempPhotos = [];
-function renderPhotoEditor(containerId) {
-  const c = document.getElementById(containerId);
-  if (!c) return;
-  c.innerHTML = tempPhotos.map((p,i) => `
-    <div class="photo-thumb">
-      <img src="${p}" alt="">
-      <button class="delete-photo" onclick="removePhoto(${i}, '${containerId}')">×</button>
-    </div>
-  `).join('');
-}
-function removePhoto(i, containerId) {
-  tempPhotos.splice(i, 1);
-  renderPhotoEditor(containerId);
-}
-async function addPhotos(input, step) {
-  const files = [...input.files];
-  for (const f of files) {
-    try {
-      const data = await compressImage(f);
-      tempPhotos.push(data);
-    } catch (e) { toast('โหลดรูปไม่สำเร็จ', 'error'); }
-  }
-  input.value = '';
-  renderPhotoEditor('photo-grid');
-}
 function saveStepB() {
   const shipDate = document.getElementById('shipDate').value;
   if (!shipDate) { toast('กรุณาเลือกวันจัดส่ง', 'error'); return; }
+  const photos = collectStepPhotos();
   if (!updateShipment(state.currentId, s => ({
-    ...s, stepB: { shipDate, photos: tempPhotos, completed: true }
+    ...s, stepB: { shipDate, photos, completed: true }
   }))) return;
   toast('บันทึกเรียบร้อย ✓', 'success');
   state.view = 'owner-detail';
@@ -1709,6 +1868,7 @@ function renderStepC() {
   const s = getShipment(state.currentId);
   if (!s) { back(); return; }
   renderTopbar('Step C/F: ขนส่ง');
+  loadTempPhotos(s.stepC);
   const c = s.stepC || {};
   document.getElementById('main').innerHTML = `
     <div class="form-section">
@@ -1756,6 +1916,7 @@ function renderStepC() {
         <div class="field-hint">ค่าขนส่งคำนวณ = ปริมาตร × อัตรา (ขั้นต่ำ 500 ฿)</div>
       </div>
     </div>
+    ${renderStepPhotosBlock('C')}
   `;
   renderBottomBar(`
     <button class="btn btn-secondary" onclick="back()">ยกเลิก</button>
@@ -1785,11 +1946,13 @@ function saveStepC() {
   if (!boxes || boxes <= 0) { toast('กรุณากรอกจำนวนกล่อง', 'error'); return; }
   if (!carrierEl) { toast('กรุณาเลือกขนส่ง', 'error'); return; }
   if (carrierEl.value === 'TPI' && !transportEl) { toast('กรุณาเลือกทางรถหรือทางเรือ', 'error'); return; }
+  const photos = collectStepPhotos();
   if (!updateShipment(state.currentId, s => ({
     ...s, stepC: {
       weight, boxes, volume: isNaN(volume) ? null : volume,
       carrier: carrierEl.value,
       transportMode: carrierEl.value === 'TPI' ? transportEl.value : null,
+      photos,
       completed: true
     }
   }))) return;
@@ -1814,6 +1977,7 @@ function renderStepD() {
   const s = getShipment(state.currentId);
   if (!s) { back(); return; }
   renderTopbar('Step D: ถึงไทย');
+  loadTempPhotos(s.stepD);
   const d = s.stepD || {};
   const isNext = s.stepC?.carrier === 'NEXT';
   const volume = Number(s.stepC?.volume) || 0;
@@ -1868,6 +2032,7 @@ function renderStepD() {
         <div class="field-hint" style="padding:10px;background:var(--primary-50);border-radius:8px;color:var(--primary)">ℹ️ ขนส่ง TPI ไม่ต้องบันทึกค่าศุลกากร/VAT</div>
       `}
     </div>
+    ${renderStepPhotosBlock('D')}
   `;
   renderBottomBar(`
     <button class="btn btn-secondary" onclick="back()">ยกเลิก</button>
@@ -1900,8 +2065,9 @@ function saveStepD() {
     tpiToNim = parseFloat(document.getElementById('tpiToNim').value);
     if (isNaN(tpiToNim) || tpiToNim < 0) tpiToNim = TPI_TO_NIM_BASE / arrivalGroupSize;
   }
+  const photos = collectStepPhotos();
   if (!updateShipment(state.currentId, s => ({
-    ...s, stepD: { arrivalDate, shippingCost, customs, vat, tpiToNim, arrivalGroupSize, completed: true }
+    ...s, stepD: { arrivalDate, shippingCost, customs, vat, tpiToNim, arrivalGroupSize, photos, completed: true }
   }))) return;
   toast('บันทึกเรียบร้อย ✓', 'success');
   state.view = 'owner-detail';
@@ -1986,15 +2152,19 @@ function renderStaffDetail() {
       ${itemsHtml}
     </div>
 
-    ${s.stepB?.photos?.length ? `
-    <div class="form-section">
-      <h3>📸 รูปจากโรงงาน</h3>
-      ${renderPhotoGridStatic(s.stepB.photos)}
-    </div>` : ''}
+    ${['A','B','C','D'].map(step => {
+      const stepData = s['step' + step];
+      if (!stepData?.photos?.length) return '';
+      return `
+      <div class="form-section">
+        <h3>📸 หลักฐาน Step ${step}</h3>
+        ${renderPhotosViewerForStep(stepData)}
+      </div>`;
+    }).join('')}
 
     ${renderStepCard('E', 'รับของเข้าคลัง', s.stepE?.completed, s.stepE ? `
-      <div class="data-row"><span>ค่า Nim Express</span><span class="v">${fmtBaht(s.stepE.nimExpressCost)} ฿</span></div>
-      ${s.stepE.photos?.length ? renderPhotoGridStatic(s.stepE.photos) : ''}
+      ${s.stepE.nimExpressCost != null ? `<div class="data-row"><span>ค่า Nim Express</span><span class="v">${fmtBaht(s.stepE.nimExpressCost)} ฿</span></div>` : ''}
+      ${renderPhotosViewerForStep(s.stepE)}
     ` : '<div style="color:var(--text-muted)">ยังไม่ได้บันทึก</div>', 'staff-step-e', true)}
 
     ${s.stepE?.completed && !s.confirmed ? `
@@ -2023,6 +2193,7 @@ function renderStepE() {
   const s = getShipment(state.currentId);
   if (!s) { back(); return; }
   renderTopbar('Step E: รับของเข้าคลัง');
+  loadTempPhotos(s.stepE);
   const e = s.stepE || {};
   const smallBoxes = e.smallBoxes ?? '';
   const largeBoxes = e.largeBoxes ?? '';
@@ -2060,23 +2231,13 @@ function renderStepE() {
         <input type="number" id="nimCost" min="0" step="0.01" inputmode="decimal" value="${initialCost}" placeholder="0.00">
         <div class="field-hint" id="nim-hint">คำนวณอัตโนมัติจากจำนวนกล่อง — แก้ไขได้</div>
       </div>
-      <div class="field">
-        <label>ถ่ายรูปสินค้าที่รับ</label>
-        <div class="photo-grid" id="photo-grid"></div>
-        <label class="photo-add" style="display:inline-flex;margin-top:8px;width:96px">
-          <input type="file" accept="image/*" capture="environment" multiple onchange="addPhotos(this, 'E')">
-          📷
-        </label>
-        <div class="field-hint">ถ่ายรูปยืนยันการรับของ</div>
-      </div>
     </div>
+    ${renderStepPhotosBlock('E')}
   `;
   renderBottomBar(`
     <button class="btn btn-secondary" onclick="back()">ยกเลิก</button>
     <button class="btn btn-primary" onclick="saveStepE()">💾 บันทึก</button>
   `);
-  tempPhotos = [...(s.stepE?.photos || [])];
-  renderPhotoEditor('photo-grid');
 }
 function recalcNim() {
   const sb = parseFloat(document.getElementById('smallBoxes').value) || 0;
@@ -2095,13 +2256,14 @@ function saveStepE() {
   const largeRate = parseFloat(document.getElementById('largeRate').value);
   const nim = parseFloat(document.getElementById('nimCost').value);
   if (isNaN(nim) || nim < 0) { toast('กรุณากรอกค่า Nim Express', 'error'); return; }
+  const photos = collectStepPhotos();
   if (!updateShipment(state.currentId, s => ({
     ...s, stepE: {
       smallBoxes, largeBoxes,
       smallRate: isNaN(smallRate) ? NIM_SMALL_RATE : smallRate,
       largeRate: isNaN(largeRate) ? NIM_LARGE_RATE : largeRate,
       nimExpressCost: nim,
-      photos: tempPhotos, completed: true
+      photos, completed: true
     }
   }))) return;
   toast('บันทึกเรียบร้อย ✓', 'success');
@@ -2142,8 +2304,8 @@ window.saveStepB = saveStepB;
 window.saveStepC = saveStepC;
 window.saveStepD = saveStepD;
 window.saveStepE = saveStepE;
-window.addPhotos = addPhotos;
-window.removePhoto = removePhoto;
+window.uploadStepPhotos = uploadStepPhotos;
+window.removeCloudPhoto = removeCloudPhoto;
 window.selectCarrier = selectCarrier;
 window.selectTransportMode = selectTransportMode;
 window.recalcTpiToNim = recalcTpiToNim;
