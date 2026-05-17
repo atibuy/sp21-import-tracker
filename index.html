@@ -333,6 +333,13 @@
     background: var(--bg); position: relative;
   }
   .photo-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .pdf-thumb {
+    width: 100%; height: 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: var(--bg); color: var(--text-secondary);
+    font-size: 32px; gap: 2px;
+  }
+  .pdf-thumb .pdf-label { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; color: #e11d48; }
   .photo-thumb .delete-photo {
     position: absolute; top: 4px; right: 4px;
     width: 24px; height: 24px; border-radius: 50%;
@@ -881,6 +888,15 @@ function confirmModal(title, message, onYes, yesText = 'ยืนยัน', yes
 }
 
 /* ============ Image processing ============ */
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = e => resolve(e.target.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
 function compressImage(file, maxDim = 1024, quality = 0.75) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -954,15 +970,28 @@ async function uploadPhotoToCloud(dataUrl, shipmentId, containerNo, step, catego
   return await cloudCall('uploadPhoto', { payload: { shipmentId, containerNo, step, category, dataUrl } });
 }
 
+function isPdfAttachment(p) {
+  if (!p) return false;
+  if (p.mimeType === 'application/pdf') return true;
+  if (typeof p.name === 'string' && /\.pdf$/i.test(p.name)) return true;
+  if (typeof p.url === 'string' && p.url.indexOf('data:application/pdf') === 0) return true;
+  return false;
+}
+
 function renderPhotoCategoryGrid(catKey) {
   const list = tempPhotosByCategory[catKey] || [];
-  return list.map((p, i) => `
-    <div class="photo-thumb">
-      <img src="${p.thumbUrl || p.url}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.opacity='0.3'">
-      <a class="view-photo" href="${p.viewUrl}" target="_blank" rel="noopener" title="เปิดดูภาพ">↗</a>
-      <button class="delete-photo" onclick="removeCloudPhoto('${catKey}', ${i})">×</button>
-    </div>
-  `).join('');
+  return list.map((p, i) => {
+    const preview = isPdfAttachment(p)
+      ? `<div class="pdf-thumb">📄<span class="pdf-label">PDF</span></div>`
+      : `<img src="${p.thumbUrl || p.url}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.opacity='0.3'">`;
+    return `
+      <div class="photo-thumb">
+        ${preview}
+        <a class="view-photo" href="${p.viewUrl || p.url}" target="_blank" rel="noopener" title="${isPdfAttachment(p) ? 'เปิดดู PDF' : 'เปิดดูภาพ'}">↗</a>
+        <button class="delete-photo" onclick="removeCloudPhoto('${catKey}', ${i})">×</button>
+      </div>
+    `;
+  }).join('');
 }
 
 function renderPhotoCategorySection(step, cat) {
@@ -974,7 +1003,7 @@ function renderPhotoCategorySection(step, cat) {
       </div>
       <div class="photo-grid" id="grid-${cat.key}">${renderPhotoCategoryGrid(cat.key)}</div>
       <label class="photo-add" style="display:inline-flex;margin-top:8px;width:80px;font-size:24px">
-        <input type="file" accept="image/*" capture="environment" multiple onchange="uploadStepPhotos(this, '${step}', '${cat.key}')">
+        <input type="file" accept="image/*,application/pdf" multiple onchange="uploadStepPhotos(this, '${step}', '${cat.key}')">
         ＋
       </label>
     </div>
@@ -1018,7 +1047,8 @@ async function uploadStepPhotos(input, step, catKey) {
       gridEl.appendChild(placeholder);
     }
     try {
-      const data = await compressImage(f);
+      const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+      const data = isPdf ? await readFileAsDataURL(f) : await compressImage(f);
       const meta = await uploadPhotoToCloud(data, shipmentId, containerNo, step, catKey);
       const list = (tempPhotosByCategory[catKey] = tempPhotosByCategory[catKey] || []);
       list.push(Object.assign({ category: catKey }, meta));
@@ -1060,12 +1090,17 @@ function renderPhotosViewerForStep(stepData) {
       <div style="margin-top:10px">
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">${info.icon} ${escapeHtml(info.label)} · ${list.length} รูป</div>
         <div class="photo-grid">
-          ${list.map(p => `
-            <a class="photo-thumb" href="${p.viewUrl || p.url}" target="_blank" rel="noopener" title="ดูภาพเต็ม">
-              <img src="${p.thumbUrl || p.url}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.opacity='0.3'">
+          ${list.map(p => {
+            const isPdf = isPdfAttachment(p);
+            const preview = isPdf
+              ? `<div class="pdf-thumb">📄<span class="pdf-label">PDF</span></div>`
+              : `<img src="${p.thumbUrl || p.url}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.opacity='0.3'">`;
+            return `
+            <a class="photo-thumb" href="${p.viewUrl || p.url}" target="_blank" rel="noopener" title="${isPdf ? 'เปิดดู PDF' : 'ดูภาพเต็ม'}">
+              ${preview}
               <span class="view-photo" style="pointer-events:none">↗</span>
-            </a>
-          `).join('')}
+            </a>`;
+          }).join('')}
         </div>
       </div>
     `;
@@ -1757,13 +1792,13 @@ function renderCostSummary(costs, s) {
 }
 
 function confirmDelete(id) {
-  confirmModal('ลบ Shipment', `ต้องการลบ ${id} หรือไม่? การกระทำนี้ไม่สามารถยกเลิกได้`, () => {
+  confirmModal('ลบ Shipment', 'ยืนยันลบ Shipment นี้?', () => {
     deleteShipment(id);
     toast('ลบเรียบร้อย', 'success');
     state.view = 'owner-dashboard';
     state.currentId = null;
     render();
-  }, 'ลบเลย', 'btn-danger');
+  }, 'ยืนยัน', 'btn-danger');
 }
 
 /* ============ Step A (edit) ============ */
