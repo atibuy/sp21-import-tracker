@@ -1,0 +1,1997 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#1e40af">
+<title>ระบบติดตามนำเข้าสินค้าจากจีน</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --primary: #1e40af;
+    --primary-dark: #1e3a8a;
+    --primary-light: #3b82f6;
+    --primary-50: #eff6ff;
+    --primary-100: #dbeafe;
+    --bg: #f1f5f9;
+    --surface: #ffffff;
+    --text: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #94a3b8;
+    --border: #e2e8f0;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --info: #06b6d4;
+    --purple: #8b5cf6;
+    --shadow: 0 1px 3px rgba(15,23,42,0.06), 0 1px 2px rgba(15,23,42,0.04);
+    --shadow-lg: 0 10px 30px rgba(15,23,42,0.12);
+    --radius: 14px;
+    --radius-sm: 10px;
+  }
+  html, body {
+    font-family: 'Sarabun', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+    min-height: 100vh;
+    overscroll-behavior-y: contain;
+  }
+  body { font-size: 16px; }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+  input, select, textarea { font-family: inherit; font-size: 16px; }
+  img { max-width: 100%; display: block; }
+
+  /* Layout */
+  .app { max-width: 720px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    color: #fff; padding: 14px 16px;
+    display: flex; align-items: center; gap: 10px;
+    box-shadow: 0 2px 12px rgba(30,64,175,0.25);
+  }
+  .topbar h1 { font-size: 18px; font-weight: 600; flex: 1; letter-spacing: 0.2px; }
+  .topbar .back-btn {
+    width: 40px; height: 40px; border-radius: 10px;
+    background: rgba(255,255,255,0.12);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; transition: background 0.15s;
+  }
+  .topbar .back-btn:active { background: rgba(255,255,255,0.25); }
+  .topbar .mode-badge {
+    background: rgba(255,255,255,0.18); padding: 4px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 500;
+  }
+  .topbar .switch-btn {
+    background: rgba(255,255,255,0.15); padding: 6px 12px; border-radius: 8px;
+    font-size: 13px; font-weight: 500;
+  }
+  main { flex: 1; padding: 16px; padding-bottom: 100px; }
+
+  /* Mode select */
+  .mode-screen {
+    min-height: calc(100vh - 60px);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 24px;
+  }
+  .mode-logo {
+    width: 80px; height: 80px; border-radius: 20px;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 40px; color: #fff; margin-bottom: 16px;
+    box-shadow: 0 8px 24px rgba(30,64,175,0.3);
+  }
+  .mode-title { font-size: 22px; font-weight: 700; margin-bottom: 6px; color: var(--text); }
+  .mode-subtitle { color: var(--text-secondary); margin-bottom: 32px; font-size: 14px; }
+  .mode-cards { display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 360px; }
+  .mode-card {
+    background: var(--surface); border-radius: var(--radius); padding: 20px;
+    display: flex; align-items: center; gap: 16px; text-align: left;
+    box-shadow: var(--shadow); border: 2px solid transparent;
+    transition: all 0.2s;
+  }
+  .mode-card:active { transform: scale(0.98); border-color: var(--primary-light); }
+  .mode-card .icon {
+    width: 52px; height: 52px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center; font-size: 26px;
+    flex-shrink: 0;
+  }
+  .mode-card .icon.owner { background: var(--primary-100); color: var(--primary); }
+  .mode-card .icon.staff { background: #d1fae5; color: var(--success); }
+  .mode-card .info { flex: 1; }
+  .mode-card .info h3 { font-size: 17px; font-weight: 600; margin-bottom: 2px; }
+  .mode-card .info p { color: var(--text-secondary); font-size: 13px; }
+  .mode-card .arrow { color: var(--text-muted); font-size: 22px; }
+
+  /* Dashboard */
+  .summary-grid {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 16px;
+  }
+  .summary-card {
+    background: var(--surface); border-radius: var(--radius-sm); padding: 12px 14px;
+    box-shadow: var(--shadow);
+  }
+  .summary-card .label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+  .summary-card .value { font-size: 22px; font-weight: 700; color: var(--primary); }
+  .summary-card.green .value { color: var(--success); }
+  .summary-card.orange .value { color: var(--warning); }
+  .summary-card.purple .value { color: var(--purple); }
+
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 16px 0 10px;
+  }
+  .section-header h2 { font-size: 15px; font-weight: 600; color: var(--text-secondary); letter-spacing: 0.3px; }
+  .filter-tabs {
+    display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin: 0 -16px 12px; padding-left: 16px; padding-right: 16px;
+    scrollbar-width: none;
+  }
+  .filter-tabs::-webkit-scrollbar { display: none; }
+  .filter-tab {
+    padding: 7px 14px; border-radius: 999px; background: var(--surface);
+    font-size: 13px; font-weight: 500; color: var(--text-secondary);
+    white-space: nowrap; border: 1px solid var(--border);
+  }
+  .filter-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+  /* Shipment card */
+  .shipment-card {
+    background: var(--surface); border-radius: var(--radius); padding: 14px;
+    margin-bottom: 10px; box-shadow: var(--shadow); cursor: pointer;
+    transition: transform 0.15s;
+  }
+  .shipment-card:active { transform: scale(0.99); }
+  .shipment-card .head {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+  }
+  .shipment-card .id { font-weight: 700; font-size: 16px; color: var(--primary); }
+  .badge {
+    padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 500;
+    background: var(--primary-100); color: var(--primary);
+  }
+  .shipment-card .meta {
+    display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 13px; color: var(--text-secondary);
+    margin-top: 6px;
+  }
+  .shipment-card .meta span { display: inline-flex; align-items: center; gap: 4px; }
+  .shipment-card .sku-list {
+    margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border);
+    font-size: 13px; color: var(--text-secondary);
+  }
+  .shipment-card .footer {
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .shipment-card .footer .total {
+    font-size: 13px; color: var(--text-muted);
+  }
+  .shipment-card .footer .total strong { color: var(--text); font-size: 15px; }
+
+  /* Empty state */
+  .empty {
+    text-align: center; padding: 60px 20px; color: var(--text-muted);
+  }
+  .empty .icon { font-size: 56px; margin-bottom: 12px; opacity: 0.4; }
+  .empty p { font-size: 14px; }
+
+  /* FAB */
+  .fab {
+    position: fixed; bottom: 20px; right: 50%;
+    transform: translateX(348px);
+    z-index: 30;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+    color: #fff; padding: 14px 22px; border-radius: 999px;
+    font-size: 15px; font-weight: 600;
+    box-shadow: 0 6px 20px rgba(30,64,175,0.4);
+    display: flex; align-items: center; gap: 8px;
+    transition: transform 0.15s;
+  }
+  .fab:active { transform: translateX(348px) scale(0.96); }
+  @media (max-width: 720px) {
+    .fab { right: 20px; transform: none; }
+    .fab:active { transform: scale(0.96); }
+  }
+
+  /* Detail view */
+  .detail-header {
+    background: var(--surface); border-radius: var(--radius); padding: 16px;
+    margin-bottom: 14px; box-shadow: var(--shadow);
+  }
+  .detail-header .id-row {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;
+  }
+  .detail-header h2 { font-size: 22px; font-weight: 700; color: var(--primary); }
+  .detail-header .info-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  }
+  .info-item { font-size: 13px; }
+  .info-item .label { color: var(--text-muted); margin-bottom: 2px; }
+  .info-item .value { color: var(--text); font-weight: 500; }
+
+  /* Step cards */
+  .step-card {
+    background: var(--surface); border-radius: var(--radius); margin-bottom: 12px;
+    box-shadow: var(--shadow); overflow: hidden;
+  }
+  .step-card .step-header {
+    display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+    cursor: pointer;
+  }
+  .step-card .step-num {
+    width: 36px; height: 36px; border-radius: 10px;
+    background: var(--bg); color: var(--text-muted);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px;
+    flex-shrink: 0;
+  }
+  .step-card.completed .step-num { background: var(--success); color: #fff; }
+  .step-card.current .step-num { background: var(--primary); color: #fff; }
+  .step-card .step-title { flex: 1; }
+  .step-card .step-title .title { font-weight: 600; font-size: 15px; }
+  .step-card .step-title .subtitle { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
+  .step-card .step-action {
+    color: var(--primary); font-size: 13px; font-weight: 500;
+    padding: 6px 12px; border-radius: 8px; background: var(--primary-50);
+  }
+  .step-card .step-body {
+    padding: 0 16px 14px; font-size: 13px; color: var(--text-secondary);
+  }
+  .step-card .step-body .data-row {
+    display: flex; justify-content: space-between; padding: 4px 0;
+    border-top: 1px solid var(--border);
+  }
+  .step-card .step-body .data-row:first-child { border-top: none; }
+  .step-card .step-body .data-row .v { color: var(--text); font-weight: 500; }
+
+  /* Forms */
+  .form-section {
+    background: var(--surface); border-radius: var(--radius); padding: 16px;
+    margin-bottom: 12px; box-shadow: var(--shadow);
+  }
+  .form-section h3 {
+    font-size: 16px; font-weight: 600; margin-bottom: 14px;
+    padding-bottom: 10px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .form-section h3 .step-badge {
+    display: inline-block; padding: 3px 9px; border-radius: 6px;
+    background: var(--primary); color: #fff; font-size: 12px; font-weight: 600;
+  }
+  .field { margin-bottom: 12px; }
+  .field label {
+    display: block; font-size: 13px; font-weight: 500;
+    color: var(--text-secondary); margin-bottom: 6px;
+  }
+  .field label .req { color: var(--danger); }
+  .field input, .field select, .field textarea {
+    width: 100%; padding: 11px 13px;
+    border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+    background: #fff; color: var(--text);
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus {
+    outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(30,64,175,0.1);
+  }
+  .field input[type="file"] { padding: 8px; }
+  .field-hint { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .field-grid .field { margin-bottom: 0; }
+  .radio-group { display: flex; gap: 10px; }
+  .radio-card {
+    flex: 1; padding: 12px; border: 2px solid var(--border);
+    border-radius: var(--radius-sm); text-align: center; cursor: pointer;
+    transition: all 0.15s; font-weight: 600;
+  }
+  .radio-card.selected { border-color: var(--primary); background: var(--primary-50); color: var(--primary); }
+  .radio-card input { display: none; }
+  .alloc-grid {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+  }
+  .alloc-card {
+    padding: 12px 8px; border: 2px solid var(--border);
+    border-radius: var(--radius-sm); text-align: center; cursor: pointer;
+    transition: all 0.15s;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  .alloc-card input { display: none; }
+  .alloc-card.selected { border-color: var(--primary); background: var(--primary-50); }
+  .alloc-card .alloc-icon { font-size: 24px; line-height: 1; margin-bottom: 4px; }
+  .alloc-card .alloc-label { font-size: 13px; font-weight: 600; color: var(--text); }
+  .alloc-card.selected .alloc-label { color: var(--primary); }
+  .alloc-card .alloc-sub { font-size: 11px; color: var(--text-muted); }
+
+  /* Items list */
+  .item-row {
+    background: var(--bg); border-radius: var(--radius-sm); padding: 12px;
+    margin-bottom: 10px; position: relative;
+  }
+  .item-row .item-head {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
+  }
+  .item-row .item-num { font-size: 13px; font-weight: 600; color: var(--primary); }
+  .item-row .remove-btn {
+    color: var(--danger); font-size: 13px; font-weight: 500;
+    padding: 4px 10px; border-radius: 6px; background: rgba(239,68,68,0.1);
+  }
+  .add-item-btn {
+    width: 100%; padding: 12px; border-radius: var(--radius-sm);
+    border: 2px dashed var(--border); color: var(--primary);
+    font-weight: 600; font-size: 14px; background: transparent;
+    margin-top: 4px;
+  }
+  .add-item-btn:active { background: var(--primary-50); }
+
+  /* Photos */
+  .photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+  .photo-thumb {
+    aspect-ratio: 1; border-radius: var(--radius-sm); overflow: hidden;
+    background: var(--bg); position: relative;
+  }
+  .photo-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .photo-thumb .delete-photo {
+    position: absolute; top: 4px; right: 4px;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: rgba(239,68,68,0.9); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 700;
+  }
+  .photo-add {
+    aspect-ratio: 1; border-radius: var(--radius-sm);
+    border: 2px dashed var(--border); display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); font-size: 28px;
+    cursor: pointer;
+  }
+  .photo-add input { display: none; }
+
+  /* Bottom button bar */
+  .bottom-bar {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: var(--surface); padding: 12px 16px;
+    box-shadow: 0 -2px 12px rgba(15,23,42,0.06);
+    display: flex; gap: 10px;
+    max-width: 720px; margin: 0 auto;
+    border-top: 1px solid var(--border);
+    z-index: 40;
+  }
+  .btn {
+    flex: 1; padding: 13px 16px; border-radius: var(--radius-sm);
+    font-size: 15px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    transition: opacity 0.15s, transform 0.1s;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-success { background: var(--success); color: #fff; }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-secondary { background: var(--bg); color: var(--text); }
+  .btn-ghost { background: transparent; color: var(--primary); }
+
+  /* Cost summary */
+  .cost-summary {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    color: #fff; border-radius: var(--radius); padding: 16px;
+    margin-bottom: 14px;
+  }
+  .cost-summary h3 { font-size: 14px; opacity: 0.85; margin-bottom: 8px; font-weight: 500; }
+  .cost-row {
+    display: flex; justify-content: space-between; padding: 6px 0;
+    font-size: 14px;
+  }
+  .cost-row.divider { border-top: 1px solid rgba(255,255,255,0.2); margin-top: 6px; padding-top: 10px; }
+  .cost-row.total { font-size: 16px; font-weight: 600; }
+  .cost-sku-card {
+    background: var(--surface); border-radius: var(--radius-sm); padding: 12px;
+    margin-bottom: 8px; box-shadow: var(--shadow);
+  }
+  .cost-sku-card .sku-name { font-weight: 600; font-size: 14px; margin-bottom: 6px; color: var(--text); }
+  .cost-sku-card .cost-detail { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-secondary); padding: 2px 0; }
+  .cost-sku-card .cost-per-unit {
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .cost-sku-card .cost-per-unit .label { font-size: 12px; color: var(--text-muted); }
+  .cost-sku-card .cost-per-unit .value { font-size: 18px; font-weight: 700; color: var(--success); }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%);
+    background: var(--text); color: #fff; padding: 10px 18px;
+    border-radius: 999px; font-size: 14px; font-weight: 500;
+    box-shadow: var(--shadow-lg); z-index: 100;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s;
+  }
+  .toast.show { opacity: 1; }
+  .toast.error { background: var(--danger); }
+  .toast.success { background: var(--success); }
+
+  /* Modal */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(15,23,42,0.5);
+    z-index: 90; display: flex; align-items: flex-end;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s;
+  }
+  .modal-backdrop.show { opacity: 1; pointer-events: auto; }
+  @media (min-width: 480px) {
+    .modal-backdrop { align-items: center; justify-content: center; }
+  }
+  .modal {
+    background: var(--surface); border-radius: var(--radius) var(--radius) 0 0;
+    padding: 20px; width: 100%; max-width: 460px;
+    transform: translateY(20px); transition: transform 0.2s;
+  }
+  @media (min-width: 480px) { .modal { border-radius: var(--radius); } }
+  .modal-backdrop.show .modal { transform: translateY(0); }
+  .modal h3 { margin-bottom: 8px; font-size: 17px; }
+  .modal p { color: var(--text-secondary); margin-bottom: 16px; font-size: 14px; }
+  .modal-actions { display: flex; gap: 10px; }
+
+  .status-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px;
+  }
+
+  /* Searchable combobox */
+  .combo { position: relative; }
+  .combo-input {
+    width: 100%; padding: 11px 38px 11px 13px;
+    border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+    background: #fff url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="%2394a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>') no-repeat right 12px center;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .combo-input:focus {
+    outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(30,64,175,0.1);
+  }
+  .combo-input.has-value { font-weight: 500; }
+  .combo-dropdown {
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
+    max-height: 280px; overflow-y: auto; z-index: 60;
+    display: none;
+  }
+  .combo-dropdown.show { display: block; }
+  .combo-option {
+    padding: 10px 14px; cursor: pointer; border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+  }
+  .combo-option:last-child { border-bottom: none; }
+  .combo-option:hover, .combo-option.highlighted { background: var(--primary-50); }
+  .combo-option .opt-sku { font-weight: 600; font-size: 14px; color: var(--primary); }
+  .combo-option .opt-name { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  .combo-option mark { background: #fef08a; color: inherit; padding: 0 2px; border-radius: 2px; }
+  .combo-empty {
+    padding: 16px; text-align: center; color: var(--text-muted); font-size: 13px;
+  }
+  .combo-clear {
+    position: absolute; right: 32px; top: 50%; transform: translateY(-50%);
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--border); color: var(--text-secondary);
+    display: none; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+  .combo.has-value .combo-clear { display: flex; }
+  .selected-sku-name {
+    font-size: 12px; color: var(--text-secondary); margin-top: 4px;
+    padding: 4px 8px; background: var(--primary-50); border-radius: 6px;
+    display: none;
+  }
+  .selected-sku-name.show { display: block; }
+  .progress-line {
+    height: 4px; background: var(--border); border-radius: 2px; overflow: hidden;
+    margin-top: 10px;
+  }
+  .progress-line .fill {
+    height: 100%; background: linear-gradient(90deg, var(--primary) 0%, var(--primary-light) 100%);
+    transition: width 0.3s;
+  }
+  #sync-dot {
+    position: fixed; top: 10px; right: 10px; z-index: 9999;
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; color: #fff;
+    background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
+    pointer-events: none; transition: opacity 0.25s;
+  }
+  #sync-dot::before {
+    content: ''; width: 8px; height: 8px; border-radius: 50%; background: #9ca3af;
+  }
+  #sync-dot.online::before  { background: #10b981; }
+  #sync-dot.offline::before { background: #ef4444; }
+  #sync-dot.queued::before  { background: #f59e0b; }
+  #sync-dot.syncing::before { background: #3b82f6; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.3 } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar" id="topbar"></header>
+  <main id="main"></main>
+</div>
+<div id="bottom-bar"></div>
+<div class="toast" id="toast"></div>
+<div id="sync-dot" style="display:none">offline</div>
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal" id="modal-content"></div>
+</div>
+
+<script>
+'use strict';
+
+/* ============ Constants ============ */
+const SKU_DATA = [{"sku":"AUTO-SUITU-HEPAFIL-5PCS","name":"Filter เครื่องดูดฝุ่น จำนวน 5 ชิ้น"},{"sku":"AUTO-SUITU-HEPAFIL-10PCS","name":"Filter เครื่องดูดฝุ่น จำนวน 10 ชิ้น"},{"sku":"AUTO-SUITU-HEPAFIL-2PCS","name":"Filter เครื่องดูดฝุ่น จำนวน 2 ชิ้น"},{"sku":"TL-GPSDD-DIALG","name":"เครื่องวัดความหนาแบบเข็มกลับ มิซูมิ รุ่น 0-10 มม. สำหรับงานฝีมือและช่างเทคนิค"},{"sku":"TL-GPSDD-MAGSTN","name":"ไมเนอร์ทอร์ ฐานแม่เหล็กตั้งตรง สำหรับวัดขนาด พร้อมแท่งปรับระดับและมือจับ"},{"sku":"ACC-LOCK-BIKE-BLK","name":"GPSDD U-KNOW กุญแจล็อกมีเสียง Alarm กันขโมย สำหรับมอเตอร์ไซค์และจักรยาน สายสลิงหนาพิเศษ"},{"sku":"ACC-LOCK-BIKE-RED","name":"GPSDD U-KNOW กุญแจล็อกมีเสียง Alarm กันขโมย สำหรับมอเตอร์ไซค์และจักรยาน สายสลิงหนาพิเศษ"},{"sku":"ACC-LOCK-BIKE-BLUE","name":"GPSDD U-KNOW กุญแจล็อกมีเสียง Alarm กันขโมย สำหรับมอเตอร์ไซค์และจักรยาน สายสลิงหนาพิเศษ"},{"sku":"GPS-GPSDD-ST-901L","name":"GPS แทรคเกอร์ ST-901 SinoTrack แถมปากกาวัดไฟรถ ไม่มีรายเดือน รายปี ดูตำแหน่งรถ Online Realtime ฟรีตลอดอายุการใช้งาน ฟรีฟิวส์แทีบ Car รถยนต์"},{"sku":"AUTO-GPSDD-CARFS-MIC2","name":"GPSDD Car Fuse set Auto Fuse สำหรับรถยนต์ มอเตอร์ไซค์ เรือ ขนาด Standard Mini Micro Micro2 จำนวน 100 ชิ้น พร้อมอุปกรณ์ดึง fuse รองรับทุกกระแสการใช้งานในรถ"},{"sku":"GPS-GPSDD-GDT02L-4W-RL","name":"GPSDD รุ่น GDT02L 4 สาย รองรับคลื่น 4G ติดตามรถแบบเรียลทาม ส่งคำสั่งควบคุมเครื่องยนต์ได้"},{"sku":"GPS-GPSDD-GDT02L-3W","name":"GPSDD รุ่น GDT02L 3 สาย รองรับคลื่น 4G ติดตามรถแบบเรียลทาม ส่งคำสั่งควบคุมเครื่องยนต์ได้"},{"sku":"ACC-GPSDD-USBMOTO-BLU","name":"พอร์ต USB สำหรับรถมอเตอร์ไซค์ พร้อมพอร์ตจุดบุ รีสำหรับรถมอเตอร์ไซค์ พร้อมอุปกรณ์ติดตั้งครบชุด สามารถติดกับน๊อตกระจก หรือยึดกับแฮนด์ Motorcycle"},{"sku":"ACC-GPSDD-USBMOTO-RED","name":"GPSDD ที่ชาร์จโทรศัพท์มือถือ สำหรับรถมอเตอร์ไซค์ Motorcycle charger พอร์ต USB สำหรับรถมอเตอร์ไซค์หลอดไฟสีแดง"},{"sku":"ACC-GPSDD-DUALPORT","name":"พอร์ต USB แบบคู่ มีไฟแสดงแรงดันสีแดง สำหรับติดตั้งเพื่อเพิ่มพอร์ต USB ภายในรถ ใช้ได้ทั้งรถยนต์ รถบรรทุก มอเตอร์ไซค์ รถไถ เรือ เป็นต้น Car Gps"},{"sku":"ACC-GPSDD-TEMQC3PORT","name":"GPSDD พอร์ตชาร์จโทรศัพท์มือถือ แบบคู่ ชาร์จเร็ว สำหรับรถมอเตอร์ไซค์ รองรับ USB type A และ Type C ชาร์จโทรศัพท์ได้ทุกรุ่นมีไฟแสดงแรงดัน และแสดงอุณหภูมิเป็นตัวเลข Digital"},{"sku":"ACC-GPSDD-COL","name":"ปลอกคอสำหรับใ่ส่ GPS ACC-GPSDD-COL"},{"sku":"ACC-GPSDD-USB","name":"ACC-GPSDD-USB"},{"sku":"ACC-GPSDD-RELAY","name":"รีเลย์ Stock"},{"sku":"GPS-GPSDD-GDD06L","name":"GPSDD ติดตามรถแบบพกพา รุ่น GDD06L รองรับคลื่น 4G ติดตามตำแหน่งรถแบบเรียลทาม ขนาดเล็ก ติดตั้งง่าย พกพาสะดวก มีแม่เหล็กช่วยให้ง่ายต่อการติดตััง ติดตามรถผ่าน application GPSDD"},{"sku":"GPS-GPSDD-GDM05L","name":"GPSDD รุ่น GDM05L GPS คลื่น 4G ติดตามตำแหน่งรถแบบเรียลทามผ่าน application GPSDD รองรับการส่งข้อมูลตำแหน่งรถผ่านคลื่น 4G สั่งดับเครื่องยนต์จากโทรศัพท์มือถือได้"},{"sku":"GPS-GDOG","name":"G-Dog GPS สำหรับสัตว์เลี้ยง ติดตามตำแหน่งแบบเรียลทาม มีเสียงเรียก เพื่อช่วยให้การติดตามง่ายขึ้น สามารถยึดกับปลอกคอน้องหมา หรือน้องแมวขนาดใหญ่ได้"},{"sku":"ACC-GPSDD-SIM","name":"Sim iOT สำหรับอุปกรณ์ GPS มี Data internet ไม่อั้น สำหรับกล้องวงจรปิด หรือสำหรับ Rounter หรือ สำหรับ GPS เท่านั้น ใส่โทรศัพท์มือถือไม่ได้ สุ่มเลือกเบอร์"},{"sku":"LIFE-GPSDD-URBAG-1PCS","name":"ถุงปัสสาวะพกพา ถุงฉี่พกพา ถุงปัสสาวะฉุกเฉิน ถุงปัสสาวะ 700ml ซิปล็อคกลิ่นไม่รั่วซึม มีผงเจลเพื่อเปลี่ยนสภาพฉี่เป็นเจล ไม่หกเลอะเทอะ เก้าอี้"},{"sku":"GPS-GPSDD-GDDM10s","name":"GPSDD ติดตามรถ รุ่น GDDM10s รองรับคลื่น 4G ติดตามตำแหน่งรถแบบเรียลทาม ส่งคำสั่งดับเครื่องได้"},{"sku":"GPS-GPSDD-GDS20","name":"GPSDD รุ่น GDS20 ติดตามรถป้องกันรถหาย แบตทนนาน ชาร์จครั้งเดียวสามารถตั้งค่าให้อยู่ได้นาน 1-6 เดือน"},{"sku":"GPS-GPSDD-GDD030-6K","name":"GPSDD รุ่น GDD030 Gพีเอส ขนาดเล็กป้องกันรถหาย แบตเตอรี่ขนาด 1200 mAH และ 6000 mAH มีแม่เหล็กติดตั้งง่าย ดูตำแหน่งเรียลทาม ผ่าน applciaton GPSDD"},{"sku":"GPS-GPSDD-GDD030-1.2K","name":"GPSDD รุ่น GDD030 Gพีเอส ขนาดเล็กป้องกันรถหาย แบตเตอรี่ขนาด 1200 mAH และ 6000 mAH มีแม่เหล็กติดตั้งง่าย ดูตำแหน่งเรียลทาม ผ่าน applciaton GPSDD"},{"sku":"GPS-GPSDD-GDD070","name":"GPS ติดตามรถ รุ่น GDD070 ใช้ร่วมกับ application GPSDD ติดตามรถแบบเรียลทาม ตำแหน่งแม่นยำ ออกแบบเหมือนรีเลย์ ส่งคำสั่งควบคุมการทำงานของรถได้"},{"sku":"GPS-GPSDD-GDD400","name":"GPS ตามรถ ป้องกันรถหาย รุ่น GDD400 รองรับคลื่น 4G ดูตำแหน่งรถแบบเรียลทาม ดูตำแหน่งรถ 24 ชั่วโมงผ่านโทรศัพท์มือถือ"},{"sku":"ACC-GPSDD-ADAP-15A","name":"GPSDD Adaptor แปลงไฟฟ้า 220VAC เป็น 12VDC จ่ายกระแสได้สูงถึง 10A พร้อมพอร์ต ตัวเมีย แบบปลั๊กจุดบุหร ี่ในรถ สำหรับรถยนต์ คุณภาพสูง"},{"sku":"ACC-GPSDD-ADAP-10A","name":"GPSDD Adaptor แปลงไฟฟ้า 220VAC เป็น 12VDC จ่ายกระแสได้สูงถึง 10A พร้อมพอร์ต ตัวเมีย แบบปลั๊กจุดบุหร ี่ในรถ สำหรับรถยนต์ คุณภาพสูง"},{"sku":"ACC-GPSDD-DDPOPUMB-BLK","name":"GymDD Power Pump สำหรับออกกำลังกาย จำนวน 1 ชิ้น สามารถปรับความต้านทานเพื่อต้านแรงดึงได้ ทดแทนเครื่องออกกำลังกายแบบต้านแรงดึงได้ทุกชนิด ขนาดเล็ก พกพาสะดวก"},{"sku":"ACC-GPSDD-DDPOPUMB-ORG","name":"GymDD Power Pump สำหรับออกกำลังกาย จำนวน 1 ชิ้น สามารถปรับความต้านทานเพื่อต้านแรงดึงได้ ทดแทนเครื่องออกกำลังกายแบบต้านแรงดึงได้ทุกชนิด ขนาดเล็ก พกพาสะดวก"},{"sku":"ACC-GPSDD-TESTPLUG","name":"GPSDD Test Plug เครื่องตรวจการต่อปลั๊ก Socket Outlet Tester เครื่องตรวจสอบการต่อกราวด์ เครื่องทดสอบการต่อสายนิวตรอน"},{"sku":"ACC-GPSDD-CIGABOX-SANTA","name":"กล่องบุxรี่อัตโนมัติในแนวตลก ในรูปลุงแปลก และลุงซานตาคลอส เครื่องเก็บบุxรี่แฟนซี กล่องเก็บบุxรี่แฟนซี"},{"sku":"AUTO-GPSDD-OBD2-MUL30CM","name":"GPSDD สายเชื่อมต่อ OBD2 port แบบต่อแยก และแบบต่อตรง ยาว 60 ซม. และ 30 ซม."},{"sku":"AUTO-GPSDD-OBD2-DIR60CM","name":"GPSDD สายเชื่อมต่อ OBD2 port แบบต่อแยก และแบบต่อตรง ยาว 60 ซม. และ 30 ซม."},{"sku":"LIFE-GPSDD-MUGAURO-1","name":"Magic mug aurora borealis Borealis แก้วมัค แสงเหนือ จะปรากฎแสงเหนือ เมื่อได้รับความร้อน"},{"sku":"LIFE-GPSDD-MUGAURO-3","name":"Magic mug aurora borealis Borealis แก้วมัค แสงเหนือ จะปรากฎแสงเหนือ เมื่อได้รับความร้อน"},{"sku":"LIFE-GPSDD-MUGAURO-2","name":"Magic mug aurora borealis Borealis แก้วมัค แสงเหนือ จะปรากฎแสงเหนือ เมื่อได้รับความร้อน"},{"sku":"ACC-GPSDD-CIGABOX","name":"กล่องบุหSี่อัตโนมัติในแนวตลก ในรูปลุงแปลก และลุงซานตาคลอส สำหรับวางในบ้าน หรือวางในห้องรับแขก"},{"sku":"ACC-GPSDD-CIGABOX-WEIR","name":"กล่องบุหSี่อัตโนมัติในแนวตลก ในรูปลุงแปลก และลุงซานตาคลอส สำหรับวางในบ้าน หรือวางในห้องรับแขก"},{"sku":"GPS-GPSDD-GDD010","name":"GPSDD รุ่น GDD010(No MIC) ใช้ชาร์จโทรศัพท์ และใช้เป็น GPS ได้ ติดตามรถแบบเรียลทาม ผ่าน app GPSDD"},{"sku":"TL-GPSDD-BTRCHA-YEL","name":"GPSDD E-Fast TK800 เครื่องชาร์จและวัดประสิทธิภาพแบตเตอรี่ 12V ใช้ได้ทั้งรถยนต์และมอเตอร์ไซค์"},{"sku":"TL-GPSDD-BTRCHA-RED","name":"GPSDD E-Fast TK800 เครื่องชาร์จและวัดประสิทธิภาพแบตเตอรี่ 12V ใช้ได้ทั้งรถยนต์และมอเตอร์ไซค์"},{"sku":"TL-PNGG-PHILPS-10PCS","name":"GPSDD PENGGONG ของแท้ 100% Phillips Slotter ชุดไขควงเอนกประสงค์ 10 ชิ้น ไขควงหัวแม่เหล็ก หลายขนาด"},{"sku":"LIFE-GPSDD-BTOPE","name":"Finger Ring Bottle Opener แหวนเปิดขวด ขนาด 22 มม. Stainless Steel ใช้เปิดขวดฝาจีบ ขายคละสี"},{"sku":"TL-PNGG-PHILPS-9PCS","name":"ชุดไขควง Phillips Slotted set 9 ชิ้น PENGGONG ของแท้ 100% ปลายแม่เหล็ก"},{"sku":"GPS-GPSDD-GDF30","name":"GPSDD อุปกรณ์ GPS สำหรับติดตามสัตว์ขนาดใหญ่ เช่นวัว ม้า ช้าง ควาย แกะ แพะ ลา กระทิง เป็นต้น"},{"sku":"TL-GPSDD-SOLD","name":"GPSDD หัวแร้ง บัดกรี ไฟฟ้า แบบพกพา ใช้กับ usb พอร์ต (USB Soldering Iron )"},{"sku":"ACC-AIKA-GT01","name":"GPS ติดตามรถ AIKA รุ่น GT01 ติดตามรถแบบเรียลทาม แถม SIM ฟรี ไม่มีค่าใช้จ่ายรายเดือนหรือรายปีใดๆ"},{"sku":"GPS-GPSDD-GDV02","name":"GPSDD GPS ติดตามรถ แบบประหยัด รุ่น GDV02 จีพีเอส ติดตามรถแบบ เรียลทาม สั่งดับเครื่อง ตัดสตาร์ทได้"},{"sku":"ACC-GPSDD-KAONA","name":"GPSDD ออมสิน Kaonashi จากเรื่อง Spirit away หรือ ตุ๊กตา Nofaceในรูปออมสิน"},{"sku":"GPS-GPSDD-GDD020","name":"GPS ติดตามรถ ติดตามของป้องกันรถหาย รุ่น GDD020 ฟังเสียงไม่ได้ ดูตำแหน่งรถแบบ Online เรียลทาม แบตอึด"},{"sku":"GPS-GPSDD-GDD19S","name":"GPS ติดตามรถ รุ่น GDD19s Brand แท้ GPSDD เซิร์ฟเวอร์ เสถียรที่สุด ตำแหน่งแม่นยำ ดูตำแหน่งรถ Online แบบเรียลทาม สั่งดับเครื่องได้"},{"sku":"TL-GPSDD-DT-266","name":"Digital clamp meter DT-266 แคล้มป์มิเตอร์ มิเตอร์วัดกระแสไฟ พร้อมฟังก์ชันวัดแรงดันไฟฟ้า วัดความต้านทานไฟฟ้า สามารถตรวจสอบการลัดวงจรได้"},{"sku":"LIFE-GPSDD-FTES","name":"GPSDD เปลพักเท้า เพื่อการผ่อนคลาย ลดปัญหาการเมื่อยเท้าจากการห้อยเท้าในเวลานานๆ"},{"sku":"GPS-GPSDD-GDDT08L","name":"GPSDD GPSติดตามรถ แบบเชื่อต่อพอร์ต OBD รุ่น GDDT08L ติดตามตำแหน่งรถแบบออนไลน์ เรียลทาม ติดตั้งง่ายที่สุด เพียงเสียบ Port OBD2 ในรถ"},{"sku":"ACC-GPSDD-GANESHA","name":"องค์พิฆเนศทรงเครื่องทอง ในรูปแบบฐานวางกำยาน ประทับบนดอกบัว ในปางถวายพร ควันกำยานกลิ่นหอมอ่อน แถมฟรี 30 ดอก พระพิฆเนศวร"},{"sku":"ACC-GPSDD-CHAGIPHO","name":"GPSDD แม็กsafe อุปกรณ์ช่วยชาร์จ ไอโฟ นรุ่น 12/13 ภายในรถ ชาร์จได้เร็ว กำลังไฟ 15W แม่เหล็กยึดแน่นไม่ร่วงขณะขับรถ"},{"sku":"ACC-GPSDD-ALARMGRIP-GRN","name":"GPSDD กันขโมยรถมอเตอร์ไซค์ ตัวล๊อคเบรคมือ รถมอเตอร์ไซค์ มีเสียงเตือนเมื่อมีการขโมย ล๊อคแล้วไม่สามารถเลื่อนรถหรือบิดคันเร่งได้"},{"sku":"ACC-GPSDD-ALARMGRIP-ORG","name":"GPSDD กันขโมยรถมอเตอร์ไซค์ ตัวล๊อคเบรคมือ รถมอเตอร์ไซค์ มีเสียงเตือนเมื่อมีการขโมย ล๊อคแล้วไม่สามารถเลื่อนรถหรือบิดคันเร่งได้"},{"sku":"ACC-GPSDD-NUF-PET-BLU","name":"GPSDD Nut Finder เครื่องช่วยติดตาม ค้นหา กันการลืม ด้วยสัญญาณ Bluetooth สำหรับ สัตว์เลี้ยง สิ่งของ พวงกุญแจ กระเป๋า มีเสียงเตือน เมื่อมีการลืม"},{"sku":"ACC-GPSDD-NUF-OBJ-WHT","name":"GPSDD Nut Finder เครื่องช่วยติดตาม ค้นหา กันการลืม ด้วยสัญญาณ Bluetooth สำหรับ สัตว์เลี้ยง สิ่งของ พวงกุญแจ กระเป๋า มีเสียงเตือน เมื่อมีการลืม"},{"sku":"ACC-GPSDD-NUF-OBJ-BLU","name":"GPSDD Nut Finder เครื่องช่วยติดตาม ค้นหา กันการลืม ด้วยสัญญาณ Bluetooth สำหรับ สัตว์เลี้ยง สิ่งของ พวงกุญแจ กระเป๋า มีเสียงเตือน เมื่อมีการลืม"},{"sku":"ACC-GPSDD-NUF-PET-WHT","name":"GPSDD Nut Finder เครื่องช่วยติดตาม ค้นหา กันการลืม ด้วยสัญญาณ Bluetooth สำหรับ สัตว์เลี้ยง สิ่งของ พวงกุญแจ กระเป๋า มีเสียงเตือน เมื่อมีการลืม"},{"sku":"TL-GPSDD-DEEPGAUG-DIGI","name":"เกจจ์วัดความสึกหรอดอกยาง เพื่อวัดความสึกหรอของยางรถ ใช้งานง่าย แสดงผลด้วยตัวเลข Digital ใช้วัดความสึกดอกยางเป็นประจำ เพื่อความปลอดภัย"},{"sku":"AUTO-SUITU-VACCR-PU","name":"GPSDD SuiTU Portable Car Vacuum Cleaner  เครื่องดูดฝุ่นแบบพกพา ของแท้ 100% แรงดูดสูงถึง 15000Pa (ส่งสินค้าจากไทย) ใช้ได้ทั้งการดูด และ การเป่า"},{"sku":"AUTO-SUITU-VACCR-PU-FILTER","name":"GPSDD SuiTU Portable Car Vacuum Cleaner  เครื่องดูดฝุ่นแบบพกพา ของแท้ 100% แรงดูดสูงถึง 15000Pa (ส่งสินค้าจากไทย) ใช้ได้ทั้งการดูด และ การเป่า"},{"sku":"AUTO-SUITU-VACCR-BOX","name":"GPSDD SuiTU Portable Car Vacuum Cleaner  เครื่องดูดฝุ่นแบบพกพา ของแท้ 100% แรงดูดสูงถึง 15000Pa (ส่งสินค้าจากไทย) ใช้ได้ทั้งการดูด และ การเป่า"},{"sku":"TL-GPSDD-DEEPGAUG-BLU","name":"อุปกรณ์มาตรฐาน วัดความลึกดอกยางรถยนต์ ช่วยตรวจสอบความสึกหรอของยางรถยนต์ เพื่อความปลอดภัยในการใช้รถ"},{"sku":"ACC-GPSDD-QC3PORT-RED","name":"GPSDD พอร์ตชาร์จโทรศัพท์มือถือ QC 3.0 แบบชาร์จเร็ว สำหรับรถมอเตอร์ไซค์ รองรับ USB type A และ Type C ชาร์จโทรศัพท์ได้ทุกรุ่น"},{"sku":"ACC-GPSDD-QC3PORT-BLU","name":"GPSDD พอร์ตชาร์จโทรศัพท์มือถือ QC 3.0 แบบชาร์จเร็ว สำหรับรถมอเตอร์ไซค์ รองรับ USB type A และ Type C ชาร์จโทรศัพท์ได้ทุกรุ่น"},{"sku":"ACC-GPSDD-QC3PORT-GRN","name":"GPSDD พอร์ตชาร์จโทรศัพท์มือถือ QC 3.0 แบบชาร์จเร็ว สำหรับรถมอเตอร์ไซค์ รองรับ USB type A และ Type C ชาร์จโทรศัพท์ได้ทุกรุ่น"},{"sku":"TL-GPSDD-MULTI-XB-868","name":"GPSDD มัลติมิเตอร์พกพา สำหรับช่าง มีขนาดเล็ก พกพาสะดวก มีสายวัดภายในตัว มีฝาปิด สะดวกในการจัดเก็บ และพกพา ปรับย่านวัดอัติโนมัต วัดไฟฟ้ากระแสตรง วัดไฟฟ้ากระแสสลับ วัดไดโอด วัดความต้านทาน ตรวจสอบการขาดของสายไฟ วัดกระแสไฟได้"},{"sku":"TL-GPSDD-MULTI-XB-866","name":"GPSDD มัลติมิเตอร์พกพา สำหรับช่าง มีขนาดเล็ก พกพาสะดวก มีสายวัดภายในตัว มีฝาปิด สะดวกในการจัดเก็บ และพกพา ปรับย่านวัดอัติโนมัต วัดไฟฟ้ากระแสตรง วัดไฟฟ้ากระแสสลับ วัดไดโอด วัดความต้านทาน ตรวจสอบการขาดของสายไฟ วัดกระแสไฟได้"},{"sku":"LIFE-GCEO-JUIBL600ML-PNK","name":"GOCEO แก้วปั่นผลไม้ แบบ 4 ใบมี ความจุ 600 ml ชาร์จไฟได้ แยกส่วนมอเตอร์ได้ ทำความสะอาดง่าย ไร้สายสะดวกพกพา ใบมีดถอดออกได้ ใบมีดถอดออกได้ บดน้ำแข็ง สารอาหารสกัด"},{"sku":"LIFE-GCEO-JUIBL600ML-WHT","name":"GOCEO แก้วปั่นผลไม้ แบบ 4 ใบมี ความจุ 600 ml ชาร์จไฟได้ แยกส่วนมอเตอร์ได้ ทำความสะอาดง่าย ไร้สายสะดวกพกพา ใบมีดถอดออกได้ ใบมีดถอดออกได้ บดน้ำแข็ง สารอาหารสกัด"},{"sku":"LIFE-GCEO-JUIBL600ML-BLU","name":"GOCEO แก้วปั่นผลไม้ แบบ 4 ใบมี ความจุ 600 ml ชาร์จไฟได้ แยกส่วนมอเตอร์ได้ ทำความสะอาดง่าย ไร้สายสะดวกพกพา ใบมีดถอดออกได้ ใบมีดถอดออกได้ บดน้ำแข็ง สารอาหารสกัด"},{"sku":"ACC-GPSDD-POSITAP","name":"GPSDD Posi-tap หรือ Posi-Lock ตัวแท๊บสายไฟ โดยไม่ต้องปอกสาย จำนวน 1 ตัว สำหรับแท๊บสายไฟ ออกมาใช้งานโดยไม่ต้องปอกสาย"},{"sku":"AUTO-GPSDD-POUSB","name":"GPSDD DIY 3 ช่อง เพิ่มช่องต่อ USB คู่ พอร์ตที่จุดบุ รี่ ในรถ และพอร์ตไฟแสดงแรงดันแบตเตอรี่ ภายในรถ Car รถยนต์"},{"sku":"LIFE-GPSDD-GGCARD","name":"GPSDD Google Cardboad กรุณาดู clip แนะนำก่อนซื้อ ชนิด DIY สำหรับดูภาพ 3มิต 360 องศา เหมือนเราหลุดออกไปอีกที่หนึ่ง แบบประกอบเอง ราคาประหยัด Vr"},{"sku":"ACC-GPSDD-CIGALI","name":"GPSDD ปลั๊กตัวผู้ 12-24V สำหรับใช้ในรถยนต์ พร้อมสายไฟยาว 3 เมตร คุณภาพสูง มีสวิตซ์ปิด เปิด พร้อมไฟแสดงสถานะ รองรับแรงดัน 12-24V Car รถยนต์"},{"sku":"ACC-GPSDD-ALARMGRIP-YEL","name":"GPSDD กันขโมยรถมอเตอร์ไซค์ ตัวล๊อคเบรคมือ รถมอเตอร์ไซค์ มีเสียงเตือนเมื่อมีการขโมย ล๊อคแล้วไม่สามารถเลื่อนรถหรือบิดคันเร่งได้ Motorcycle ล็อค"},{"sku":"ACC-GPSDD-ALARMGRIP-BLU","name":"GPSDD กันขโมยรถมอเตอร์ไซค์ ตัวล๊อคเบรคมือ รถมอเตอร์ไซค์ มีเสียงเตือนเมื่อมีการขโมย ล๊อคแล้วไม่สามารถเลื่อนรถหรือบิดคันเร่งได้ Motorcycle ล็อค"},{"sku":"ACC-GPSDD-ALARMGRIP-BLK","name":"GPSDD กันขโมยรถมอเตอร์ไซค์ ตัวล๊อคเบรคมือ รถมอเตอร์ไซค์ มีเสียงเตือนเมื่อมีการขโมย ล๊อคแล้วไม่สามารถเลื่อนรถหรือบิดคันเร่งได้ Motorcycle ล็อค"},{"sku":"ACC-GPSDD-ALARMGRIP-RED","name":"GPSDD กันขโมยรถมอเตอร์ไซค์ ตัวล๊อคเบรคมือ รถมอเตอร์ไซค์ มีเสียงเตือนเมื่อมีการขโมย ล๊อคแล้วไม่สามารถเลื่อนรถหรือบิดคันเร่งได้ Motorcycle ล็อค"},{"sku":"AUTO-GPSDD-CARFS-MIC","name":"Fuse set สำหรับรถยนต์ มอเตอร์ไซค์ เรือ ขนาด Micro จำนวน 100 ชิ้น Car"},{"sku":"AUTO-GPSDD-CARFS-STD","name":"Fuse set Standard size (ตัวใหญ่) สำหรับรถยนต์ มอเตอร์ไซค์ เรือ ขนาด Standard จำนวน 90 ชิ้น รองรับทุกกระแสการใช้งานในรถ 5A 7.5A 10A 15A 20A 25A 30A พร้อมตัวดึงฟิวส์ Car"},{"sku":"AUTO-GPSDD-CARFS-MIN","name":"Fuse set สำหรับรถยนต์ มอเตอร์ไซค์ เรือ ขนาด MINI จำนวน 100 ชิ้น Car"},{"sku":"AUTO-GPSDD-CZK-3634-ANL","name":"GPSDD ปั๊มเติมลมแบบพกพา 12 VDC สามารถเลือกแบบ อัตโนมัติ และ แบบ manual ได้ เครื่องเติมลมดิจิตอล อัติโนมัติ มีไฟฉายในตัว ใช้ได้กับมอเตอร์ไซด์ จักรยาน ลูกบอล เบาะลม Portable Car Air Compressor รถยนต์ รถมอเตอร์ไซค์"},{"sku":"AUTO-GPSDD-CZK-3634-DIGI","name":"GPSDD ปั๊มเติมลมแบบพกพา 12 VDC สามารถเลือกแบบ อัตโนมัติ และ แบบ manual ได้ เครื่องเติมลมดิจิตอล อัติโนมัติ มีไฟฉายในตัว ใช้ได้กับมอเตอร์ไซด์ จักรยาน ลูกบอล เบาะลม Portable Car Air Compressor รถยนต์ รถมอเตอร์ไซค์"},{"sku":"AUTO-GPSDD-FUSTAP-STD","name":"Fuse tap เลือกชนิดฟิวส์ได้ ดูชนิดของฟิวส์ให้ถูกต้อง ก่อนสั่งซื้อ สำหรับแท๊บไฟจาก แผงฟิวส์รถ โดยไม่ต้องตัดต่อสายไฟรถ แบบแจ็คเสียบ ตัวผู้ ตัวเมีย ขนาดมาตรฐานฟิวส์รถยนต์ Car ยานยนต์"},{"sku":"AUTO-GPSDD-FUSTAP-MIN","name":"Fuse tap เลือกชนิดฟิวส์ได้ ดูชนิดของฟิวส์ให้ถูกต้อง ก่อนสั่งซื้อ สำหรับแท๊บไฟจาก แผงฟิวส์รถ โดยไม่ต้องตัดต่อสายไฟรถ แบบแจ็คเสียบ ตัวผู้ ตัวเมีย ขนาดมาตรฐานฟิวส์รถยนต์ Car ยานยนต์"},{"sku":"AUTO-GPSDD-FUSTAP-MIC2","name":"Fuse tap เลือกชนิดฟิวส์ได้ ดูชนิดของฟิวส์ให้ถูกต้อง ก่อนสั่งซื้อ สำหรับแท๊บไฟจาก แผงฟิวส์รถ โดยไม่ต้องตัดต่อสายไฟรถ แบบแจ็คเสียบ ตัวผู้ ตัวเมีย ขนาดมาตรฐานฟิวส์รถยนต์ Car ยานยนต์"},{"sku":"AUTO-GPSDD-FUSTAP-MIC","name":"Fuse tap เลือกชนิดฟิวส์ได้ ดูชนิดของฟิวส์ให้ถูกต้อง ก่อนสั่งซื้อ สำหรับแท๊บไฟจาก แผงฟิวส์รถ โดยไม่ต้องตัดต่อสายไฟรถ แบบแจ็คเสียบ ตัวผู้ ตัวเมีย ขนาดมาตรฐานฟิวส์รถยนต์ Car ยานยนต์"},{"sku":"AUTO-GPSDD-BATTEST","name":"Battery tester เครื่องมือตรวจสอบแบตเตอรี่ ขนาด 12V แสดงผลด้วยหลอดไฟ LED อ่านค่าง่าย สามารถประเมินคุณภาพแบต ก่อนที่จะส่งผลให้รถสตาร์ทไม่ติด รถยนต์ Car"},{"sku":"AUTO-GPSDD-EH-PUMP-XG-668A","name":"เครื่องสูบลมไฟฟ้า จ่ายลมได้มากกว่า ใช้ไฟได้หลายระบบ ไฟ 110-220 เป่มลมที่นอนได้"},{"sku":"AUTO-GPSDD-EH-PUMP-XG-668D","name":"เครื่องสูบลมไฟฟ้า จ่ายลมได้มากกว่า ใช้ไฟได้หลายระบบ ไฟ 110-220 เป่มลมที่นอนได้"},{"sku":"TL-GPSDD-LX1010B","name":"Lux meter รุ่น Lx1010B เครื่องวัดแสงสว่าง สามารถวัดค่าความสว่างได้ มากถึง 50,000 lux มีความแม่นยำสูง หน้าจอขนาดใหญ่ ง่ายต่อการอ่านค่า เหมาะสำหรับวิศกร สำหรับการออกแบบด้านแสงสว่าง ใช้ในโรงงานอุตสาหกรรม หรือวัดค่าความสว่างในจุดต่างๆ"},{"sku":"LIFE-TVSKY-PILW","name":"Travelsky ถุงเติมลม สำหรับหมอนลม (ไม่รวมหมอนลม) ใช้เป็นถุงเติมลมโดยไม่ต้องใช้ปากเป่า เติมลมได้เร็ว และเป็นกระเป๋าใส่หมอนลม ในตัวเดียว Sport Camping"},{"sku":"AUTO-ANHT-BTRCHA","name":"ANHTZYX ของแท้ 100% เครื่องชาร์จแบตเตอรี่อัจฉริยะ 12V และฟื้นฟูแบตเตอรี่รถยนต์ สำหรับรถยนต์ มอเตอร์ไซค์ Motorcycle"},{"sku":"TL-GPSDD-GAUGTHIC-WHT","name":"เครื่องวัดความหนาของสีบนตัวถังรถแบบพกพา Digital thickness gauge ใช้วัดความหนาของชั้นสี หรือฟีมล์ที่ทาทับบนโลหะ ค่าแม่นยำ ใช้งานง่าย Car รถยนต์"},{"sku":"TL-GPSDD-GAUGTHIC-BLU","name":"เครื่องวัดความหนาของสีบนตัวถังรถแบบพกพา Digital thickness gauge ใช้วัดความหนาของชั้นสี หรือฟีมล์ที่ทาทับบนโลหะ ค่าแม่นยำ ใช้งานง่าย Car รถยนต์"},{"sku":"TL-GPSDD-GAUGTHIC-YEL","name":"เครื่องวัดความหนาของสีบนตัวถังรถแบบพกพา Digital thickness gauge ใช้วัดความหนาของชั้นสี หรือฟีมล์ที่ทาทับบนโลหะ ค่าแม่นยำ ใช้งานง่าย Car รถยนต์"},{"sku":"ACC-GPSDD-BTOPE","name":"แหวนเปิดขวด (ขายคละสี) ที่เปิดขวดฝาจีบ ทรงแหวน ที่เปิดขวด bottle opener"},{"sku":"AUTO-GPSDD-HL-107-GRN","name":"[สินค้าพร้อมส่ง] เครื่องดูดฝุ่นพกพา HL-107 แรงดูด 9000 Pa ใช้ภายในรถ หรือใช้ที่บ้าน พร้อมอุปกรณ์เสริมครบ Set"},{"sku":"AUTO-GPSDD-HL-107-GRY","name":"[สินค้าพร้อมส่ง] เครื่องดูดฝุ่นพกพา HL-107 แรงดูด 9000 Pa ใช้ภายในรถ หรือใช้ที่บ้าน พร้อมอุปกรณ์เสริมครบ Set"},{"sku":"AUTO-GPSDD-HL-107-WHT","name":"[สินค้าพร้อมส่ง] เครื่องดูดฝุ่นพกพา HL-107 แรงดูด 9000 Pa ใช้ภายในรถ หรือใช้ที่บ้าน พร้อมอุปกรณ์เสริมครบ Set"},{"sku":"TL-GPSDD-VERNC","name":"เวอร์เนีย วัดละเอียด แบบไม่ใช้ แบตเตอรี่ Vernier Caliper ขนาด 6 นิ้ว (0-150 มม.) ความละเอียด 1/128in และ 0.05mm พร้อมกล่อง"},{"sku":"TL-GPSDD-MICMI","name":"Micro Caliper ไมโครมิเตอร์ ขนาด 0-25 mm. ความละเอียด 0.01 mm. ใช้วัด Dimension เส้นผ่านศูนย์กลาง ความหนาชิ้นงาน"},{"sku":"AUTO-SUITU-ST-6645P-BOX","name":"ของแท้ เครื่องดูดงฝุ่นแรงดูด 95000 Pa รุน ST-6645Pro ใช้มอเตอรไร้แปรงถ่าน จากเยอรมัน ได้เป่า ดูด และเติมลมได้ในเครื่องเดียว ขนาดเล็ก ดูดแรง"},{"sku":"AUTO-SUITU-ST-6645P-PU","name":"ของแท้ เครื่องดูดงฝุ่นแรงดูด 95000 Pa รุน ST-6645Pro ใช้มอเตอรไร้แปรงถ่าน จากเยอรมัน ได้เป่า ดูด และเติมลมได้ในเครื่องเดียว ขนาดเล็ก ดูดแรง"},{"sku":"AUTO-SUITU-ST-6645P-PU-FILTER","name":"ของแท้ เครื่องดูดงฝุ่นแรงดูด 95000 Pa รุน ST-6645Pro ใช้มอเตอรไร้แปรงถ่าน จากเยอรมัน ได้เป่า ดูด และเติมลมได้ในเครื่องเดียว ขนาดเล็ก ดูดแรง"},{"sku":"LIFE-TVSKY-PILW-NAVY","name":"GPSDD ที่ซบนอน TravelSky พร้อมถุงเติมลม สำหรับซบนอนขณะเดินทางบนเครื่องบิน หรือเดินทางบนรถ หรือก้มเล่นโทรศัพท์ สามารถใช้ได้ในระหว่างเดินทาง หรือใช้ได้ในที่ทำงาน ช่วยให้การงีบนอน เป็นเรื่องสะดวกสบาย ออกแบบตามสรีระศาสตร์ ทำให้ไม่เมื่อ หลังจากงีบนอน"},{"sku":"LIFE-TVSKY-PILW-GRY","name":"GPSDD ที่ซบนอน TravelSky พร้อมถุงเติมลม สำหรับซบนอนขณะเดินทางบนเครื่องบิน หรือเดินทางบนรถ หรือก้มเล่นโทรศัพท์ สามารถใช้ได้ในระหว่างเดินทาง หรือใช้ได้ในที่ทำงาน ช่วยให้การงีบนอน เป็นเรื่องสะดวกสบาย ออกแบบตามสรีระศาสตร์ ทำให้ไม่เมื่อ หลังจากงีบนอน"},{"sku":"TL-GPSDD-DOORLOCK-SLV","name":"GPSDD Door Locker อุปกรณ์ Lock ประตูโดยการดึง ป้องกันเด็กเปิดประตูออกขณะที่เผลอ มีแรงป้องกันการกระแทกจากภายนอก ได้ดีกว่าประตูธรรมดาถึง 12 เท่า มี 3 สีให้เลือก ล๊อคประตู ตัว Lock ประตู"},{"sku":"TL-GPSDD-DOORLOCK-WHT","name":"GPSDD Door Locker อุปกรณ์ Lock ประตูโดยการดึง ป้องกันเด็กเปิดประตูออกขณะที่เผลอ มีแรงป้องกันการกระแทกจากภายนอก ได้ดีกว่าประตูธรรมดาถึง 12 เท่า มี 3 สีให้เลือก ล๊อคประตู ตัว Lock ประตู"},{"sku":"TL-GPSDD-DOORLOCK-BLK","name":"GPSDD Door Locker อุปกรณ์ Lock ประตูโดยการดึง ป้องกันเด็กเปิดประตูออกขณะที่เผลอ มีแรงป้องกันการกระแทกจากภายนอก ได้ดีกว่าประตูธรรมดาถึง 12 เท่า มี 3 สีให้เลือก ล๊อคประตู ตัว Lock ประตู"},{"sku":"ACC-GPSDD-NUF-OBJ","name":"GPSDD Nut Finder เครื่องช่วยติดตาม ค้นหา กันการลืม ด้วยสัญญาณ Bluetooth สำหรับ สัตว์เลี้ยง สิ่งของ พวงกุญแจ กระเป๋า มีเสียงเตือน เมื่อมีการลืม"},{"sku":"ACC-GPSDD-NUF-PET","name":"GPSDD Nut Finder เครื่องช่วยติดตาม ค้นหา กันการลืม ด้วยสัญญาณ Bluetooth สำหรับ สัตว์เลี้ยง สิ่งของ พวงกุญแจ กระเป๋า มีเสียงเตือน เมื่อมีการลืม"},{"sku":"TL-GPSDD-TESTPEN","name":"GPSDD ปากกาวัดไฟรถ ไขควงวัดไฟรถ ปากกาวัดไฟ 12-24 v. ใช้วัดหาจุดที่มีไฟจ่าย ของระบบไฟภายในรถ ใช้หาจุดที่ฟิวส์ขาด ภายในรถ Car รถยนต์"},{"sku":"ACC-GPSDD-BONSAI-DAKGRN","name":"บอนไซ ต้นสน สุง 1 ฟุต ขนาดเท่าของจริง ทำจากพลาสติก สำหรับวางตกแต่งบ้าน ห้องรับแขก สำนักงาน office ร้านอาหาร ที่ทำงาน เพื่มความสวยงาม เป็นธรรมชาติ"},{"sku":"ACC-GPSDD-BONSAI-GRN","name":"บอนไซ ต้นสน สุง 1 ฟุต ขนาดเท่าของจริง ทำจากพลาสติก สำหรับวางตกแต่งบ้าน ห้องรับแขก สำนักงาน office ร้านอาหาร ที่ทำงาน เพื่มความสวยงาม เป็นธรรมชาติ"},{"sku":"LIFE-GPSDD-MUGAURO-GRN","name":"แก้วกาแฟ หรือแก้วมัก รูปแสงเหนือ สามารถเปลี่ยนรูปเป็นภาพแสงเหนือบนแก้วกาแฟ เมื่อได้รับความร้อน"},{"sku":"LIFE-GPSDD-MUGAURO-PURP","name":"แก้วกาแฟ หรือแก้วมัก รูปแสงเหนือ สามารถเปลี่ยนรูปเป็นภาพแสงเหนือบนแก้วกาแฟ เมื่อได้รับความร้อน"},{"sku":"LIFE-GPSDD-MUGAURO-BLU","name":"แก้วกาแฟ หรือแก้วมัก รูปแสงเหนือ สามารถเปลี่ยนรูปเป็นภาพแสงเหนือบนแก้วกาแฟ เมื่อได้รับความร้อน"},{"sku":"ACC-GPSDD-USBMOTO","name":"ปลั๊ก 12V และ USB port สำหรับรถมอเตอร์ไซค์ กันน้ำ ขับลุยฝนได้ ชาร์จโทรศัพท์มือถือได้ ยึดกับก้านกระจก หรือ Bar Handle ได้ Motorcycle"},{"sku":"AUTO-CRSN-COMPUMP","name":"Carsun Air compressure pump ปั๊มเติมลมอัตโนมัติแบบพกพา สามารถเติมลมยาง รถยนต์ รถจักรยานยนต์ มอเตอร์ไซค์ บอล ที่นอนเป่าลมได้"},{"sku":"TL-GPSDD-GM320","name":"GDD GM320 เครื่องวัดอุณหภูมิแบบเลเซอร์ วัดอุณหภูมิเครื่องยนต์ ปลอดภัย ไม่ต้องสัมผัส ปื นวัดอุณหภูมิ สำหรับช่างแอร์ ช่างยนต์ ช่างไฟฟ้า"},{"sku":"AUTO-GPSDD-BATCHEK12VDC","name":"Battery meter เครื่องวัดประสิทธิภาพ แบตเตอรี่รถยนต์ แรงดัน 12V ใช้ได้ทั้งรถยนต์ Car รถมอเตอร์ไซค์ และแบตโซล่าเซลล์"},{"sku":"LIFE-GPSDD-FIBER-GRN","name":"ผ้าไมโครไฟเบอร์แบบยาวหนานุ่มขนาด 600 GRM ขนาด 60x180ซม. ซึมซับน้ำได้ดีมาก ไม่มีขุยหลุดลอก ซักทำความสะอาดได้บ่อยเท่าที่ต้องการ Clean ผ้าเช็ดมือ ผ้าขนหนู ผ้าเช็ดรถ ผ้าทำความสะอาดรถ"},{"sku":"LIFE-GPSDD-FIBER-BLU","name":"ผ้าไมโครไฟเบอร์แบบยาวหนานุ่มขนาด 600 GRM ขนาด 60x180ซม. ซึมซับน้ำได้ดีมาก ไม่มีขุยหลุดลอก ซักทำความสะอาดได้บ่อยเท่าที่ต้องการ Clean ผ้าเช็ดมือ ผ้าขนหนู ผ้าเช็ดรถ ผ้าทำความสะอาดรถ"},{"sku":"LIFE-GPSDD-FIBER-YEL","name":"ผ้าไมโครไฟเบอร์แบบยาวหนานุ่มขนาด 600 GRM ขนาด 60x180ซม. ซึมซับน้ำได้ดีมาก ไม่มีขุยหลุดลอก ซักทำความสะอาดได้บ่อยเท่าที่ต้องการ Clean ผ้าเช็ดมือ ผ้าขนหนู ผ้าเช็ดรถ ผ้าทำความสะอาดรถ"},{"sku":"ACC-GPSDD-SMFL-SLV","name":"กุญแจคลายล๊อค ด้วยลายนิ้วมือ Smart Fingerprint Lock Keyless ชาร์จด้วย Micro USB ชาร์จครั้งเดียว อยู่ได้ 6 เดือน ใช้ล๊อคประตู ล๊อคกระเป๋าเดินทาง"},{"sku":"ACC-GPSDD-SMFL-BLK","name":"กุญแจคลายล๊อค ด้วยลายนิ้วมือ Smart Fingerprint Lock Keyless ชาร์จด้วย Micro USB ชาร์จครั้งเดียว อยู่ได้ 6 เดือน ใช้ล๊อคประตู ล๊อคกระเป๋าเดินทาง"},{"sku":"AUTO-GPSDD-CMUL4IN1","name":"ถ้วยชาร์จไฟภายในรถ Port USB ชาร์จไฟภายในรถ พร้อมปลั๊ก 12V 2 ช่อง สามารถแสดงแรงดันแบตเตอรี่ Check สภาพแบตเตอรี่ได้ Car รถยนต์"},{"sku":"TL-GPSDD-DEEPGAUG","name":"เกจจ์วัดความสึกหรอของดอกยาง เพื่อความปลอดภัยในการใช้รถ แสดงผลด้วยเลข Digital เพิ่มความปลอดภัย ใช้งานง่าย ควรมีติดรถไว้ รถยนต์ Car"},{"sku":"TL-GPSDD-WRE","name":"ประแจแหวน แบบปรับการหมุนได้ ทรงตัว S จำนวน 6 ชิ้น พร้อมชุดจัดเก็บอย่างดี ไม่เป็นสนิม ทำให้การทำงานง่ายขึ้น ประแจ Span ประแจกร๊อกแกร๊ก"},{"sku":"TL-GPSDD-SCREW-CRV","name":"ชุดไขควงตอกกระแทก เกรดเหล็ก CRV และ S2 ใช้ขันน็อต-คลายน็อต ที่ขันแน่น บรรจุในกล่องเหล็กอย่างดี น๊อตเป็นสนิม หัวน๊อตเสีย ใช้ไขควงตอกกระแทก จะสามารถคลายน๊อตได้โดยง่าย"},{"sku":"TL-GPSDD-SCREW-S2","name":"ชุดไขควงตอกกระแทก เกรดเหล็ก CRV และ S2 ใช้ขันน็อต-คลายน็อต ที่ขันแน่น บรรจุในกล่องเหล็กอย่างดี น๊อตเป็นสนิม หัวน๊อตเสีย ใช้ไขควงตอกกระแทก จะสามารถคลายน๊อตได้โดยง่าย"},{"sku":"TL-GPSDD-HSC8 16-4A-BLKYEL","name":"HSC8 16-4A คีมย้ำสลิปเข้าปลายสายไฟ (Wire ferrules End sleeves) แบบสี่เหลี่ยม พร้อมสลิปต่อสายไฟ จำนวน 1250 ชิ้น"},{"sku":"TL-GPSDD-HSC8 16-4A-RDBLU","name":"HSC8 16-4A คีมย้ำสลิปเข้าปลายสายไฟ (Wire ferrules End sleeves) แบบสี่เหลี่ยม พร้อมสลิปต่อสายไฟ จำนวน 1250 ชิ้น"},{"sku":"TL-GPSDD-HSC8 16-4A-BLKRD","name":"HSC8 16-4A คีมย้ำสลิปเข้าปลายสายไฟ (Wire ferrules End sleeves) แบบสี่เหลี่ยม พร้อมสลิปต่อสายไฟ จำนวน 1250 ชิ้น"},{"sku":"TL-GPSDD-HSC8 16-4A-BLUBLK","name":"HSC8 16-4A คีมย้ำสลิปเข้าปลายสายไฟ (Wire ferrules End sleeves) แบบสี่เหลี่ยม พร้อมสลิปต่อสายไฟ จำนวน 1250 ชิ้น"},{"sku":"LIFE-GPSDD-UMBE-BLUUV","name":"GPSDD ร่มพับขนาดใหญ่ เคลือบ ป้องกัน UV แสงไม่ทะลุ ร่มยักษ์ ป้องกันฝนได้มากถึง 4 คน ไม่ต้องกลัวเปียก ร่มกอล์ฟ ร่มกันแดด ร่มกันฝน ร่มกัน UV"},{"sku":"LIFE-GPSDD-UMBE-PURPUV","name":"GPSDD ร่มพับขนาดใหญ่ เคลือบ ป้องกัน UV แสงไม่ทะลุ ร่มยักษ์ ป้องกันฝนได้มากถึง 4 คน ไม่ต้องกลัวเปียก ร่มกอล์ฟ ร่มกันแดด ร่มกันฝน ร่มกัน UV"},{"sku":"LIFE-GPSDD-UMBE-GRNUV","name":"GPSDD ร่มพับขนาดใหญ่ เคลือบ ป้องกัน UV แสงไม่ทะลุ ร่มยักษ์ ป้องกันฝนได้มากถึง 4 คน ไม่ต้องกลัวเปียก ร่มกอล์ฟ ร่มกันแดด ร่มกันฝน ร่มกัน UV"},{"sku":"LIFE-GPSDD-UMBE-REDUV","name":"GPSDD ร่มพับขนาดใหญ่ เคลือบ ป้องกัน UV แสงไม่ทะลุ ร่มยักษ์ ป้องกันฝนได้มากถึง 4 คน ไม่ต้องกลัวเปียก ร่มกอล์ฟ ร่มกันแดด ร่มกันฝน ร่มกัน UV"},{"sku":"LIFE-GPSDD-UMBE-BRWNUV","name":"GPSDD ร่มพับขนาดใหญ่ เคลือบ ป้องกัน UV แสงไม่ทะลุ ร่มยักษ์ ป้องกันฝนได้มากถึง 4 คน ไม่ต้องกลัวเปียก ร่มกอล์ฟ ร่มกันแดด ร่มกันฝน ร่มกัน UV"},{"sku":"LIFE-GPSDD-UMBE-NAVYUV","name":"GPSDD ร่มพับขนาดใหญ่ เคลือบ ป้องกัน UV แสงไม่ทะลุ ร่มยักษ์ ป้องกันฝนได้มากถึง 4 คน ไม่ต้องกลัวเปียก ร่มกอล์ฟ ร่มกันแดด ร่มกันฝน ร่มกัน UV"},{"sku":"LIFE-GPSDD-UMBE-BLKUV","name":"GPSDD ร่มพับขนาดใหญ่ เคลือบ ป้องกัน UV แสงไม่ทะลุ ร่มยักษ์ ป้องกันฝนได้มากถึง 4 คน ไม่ต้องกลัวเปียก ร่มกอล์ฟ ร่มกันแดด ร่มกันฝน ร่มกัน UV"},{"sku":"LIFE-GPSDD-FTES-NAVY","name":"เปลพักเท้า เพื่อการผ่อนคลาย ลดปัญหาการเมื่อยเท้าจากการห้อยเท้าในเวลานานๆ ทำให้เลือดไหลเวียนสะดวก เปลวางเท้า  Massage"},{"sku":"LIFE-GPSDD-FTES-ORG","name":"เปลพักเท้า เพื่อการผ่อนคลาย ลดปัญหาการเมื่อยเท้าจากการห้อยเท้าในเวลานานๆ ทำให้เลือดไหลเวียนสะดวก เปลวางเท้า  Massage"},{"sku":"TL-GPSDD-ATDOORCLO-GRY","name":"Automatic Door Closer ตัวช่วยปิดประตูอัตโนมัติ อุปกรณ์ช่วยปิดประตูอัตโนมัติ สปริงปิดประตูอัตโนมัติ Spring Door Closer"},{"sku":"TL-GPSDD-ATDOORCLO-WHT","name":"Automatic Door Closer ตัวช่วยปิดประตูอัตโนมัติ อุปกรณ์ช่วยปิดประตูอัตโนมัติ สปริงปิดประตูอัตโนมัติ Spring Door Closer"},{"sku":"TL-GPSDD-ATDOORCLO-BLK","name":"Automatic Door Closer ตัวช่วยปิดประตูอัตโนมัติ อุปกรณ์ช่วยปิดประตูอัตโนมัติ สปริงปิดประตูอัตโนมัติ Spring Door Closer"},{"sku":"ACC-GPSDD-BT12","name":"BT-12 หูฟังและไมค์บลูทูธ สำหรับติดกับหมวกกันน๊อค รถมอเตอร์ไซค์ ฟังเพลง รับโทรศัพท์ขณะขับรถ อย่างปลอดภัย ไฟฟ้า สีดำ Bluetooth"},{"sku":"ACC-GPSDD-KAONA-RECHA","name":"ออมสิน No Face ออมสิน Kao Nashi กินเหรียญ ออมสินผีกินเหรียญ ออมสินสนุก สนุกกับการออม ทำให้การออมเป็นเรื่องสนุก จำลองมาจาก No Face เรือง Spirit away กระปุกออมสิน กระปุก"},{"sku":"ACC-GPSDD-KAONA-NOCHA","name":"ออมสิน No Face ออมสิน Kao Nashi กินเหรียญ ออมสินผีกินเหรียญ ออมสินสนุก สนุกกับการออม ทำให้การออมเป็นเรื่องสนุก จำลองมาจาก No Face เรือง Spirit away กระปุกออมสิน กระปุก"},{"sku":"TL-GPSDD-HINGES-SLV","name":"บานพับประตูอัตโนมัติ 3 in 1 สามารถปิดประตูอัตโนมัติ และเปิดค้างได้เมื่อผลักประตูให้เปิดมากกว่า 90 องศา ป้องกันการลืมปิดประตู"},{"sku":"TL-GPSDD-HINGES-GOLD","name":"บานพับประตูอัตโนมัติ 3 in 1 สามารถปิดประตูอัตโนมัติ และเปิดค้างได้เมื่อผลักประตูให้เปิดมากกว่า 90 องศา ป้องกันการลืมปิดประตู"},{"sku":"ACC-GPSDD-GGCARD","name":"DIY Google Cardboard แบบประกอบเอง อ่านรายละเอียดสินค้า และดู Clip ก่อนตัดสินใจซื้อ ต้องประกอบเอง ถ้าโทรศัพท์มีฟังก์ชั่นไจโรสโคป จะใช้งานได้ทุกฟังก์ชั่น ใช้สำหรับดูภาพเสมือนจริง แบบประกอบเอง สำหรับเรียนรู้ศึกษาโลกกว้าง Vr"},{"sku":"ACC-GPSDD-GRIP-GRN","name":"อุปกรณ์ล๊อคเบรค และคันเร่ง รถมอเตอร์ไซด์ ล๊อคแล้วไม่สามารถเลื่อนรถ หรือบิดคันเร่งได้ ป้องกันการขโมยรถมอเตอร์ไซค์ สีส้ม Motorcycle"},{"sku":"ACC-GPSDD-GRIP-ORG","name":"อุปกรณ์ล๊อคเบรค และคันเร่ง รถมอเตอร์ไซด์ ล๊อคแล้วไม่สามารถเลื่อนรถ หรือบิดคันเร่งได้ ป้องกันการขโมยรถมอเตอร์ไซค์ สีส้ม Motorcycle"},{"sku":"ACC-GPSDD-GRIP-BLU","name":"อุปกรณ์ล๊อคเบรค และคันเร่ง รถมอเตอร์ไซด์ ล๊อคแล้วไม่สามารถเลื่อนรถ หรือบิดคันเร่งได้ ป้องกันการขโมยรถมอเตอร์ไซค์ สีส้ม Motorcycle"},{"sku":"ACC-GPSDD-GRIP-YEL","name":"อุปกรณ์ล๊อคเบรค และคันเร่ง รถมอเตอร์ไซด์ ล๊อคแล้วไม่สามารถเลื่อนรถ หรือบิดคันเร่งได้ ป้องกันการขโมยรถมอเตอร์ไซค์ สีส้ม Motorcycle"},{"sku":"ACC-GPSDD-GRIP-RED","name":"อุปกรณ์ล๊อคเบรค และคันเร่ง รถมอเตอร์ไซด์ ล๊อคแล้วไม่สามารถเลื่อนรถ หรือบิดคันเร่งได้ ป้องกันการขโมยรถมอเตอร์ไซค์ สีส้ม Motorcycle"},{"sku":"ACC-GPSDD-GRIP-BLK","name":"อุปกรณ์ล๊อคเบรค และคันเร่ง รถมอเตอร์ไซด์ ล๊อคแล้วไม่สามารถเลื่อนรถ หรือบิดคันเร่งได้ ป้องกันการขโมยรถมอเตอร์ไซค์ สีส้ม Motorcycle"},{"sku":"LIFE-TVSKY-FOOTREST-BLU","name":"Travelsky พร้อมถุงเป่าลม ใช้วางเท้า หรือนั่ง ให้เป็นเบาะรองขา เบาะนอนสำหรับเด็ก Inflatable Footrest สามารถปรับได้ 3 ระดับ"},{"sku":"LIFE-TVSKY-FOOTREST-GRY","name":"Travelsky พร้อมถุงเป่าลม ใช้วางเท้า หรือนั่ง ให้เป็นเบาะรองขา เบาะนอนสำหรับเด็ก Inflatable Footrest สามารถปรับได้ 3 ระดับ"},{"sku":"GPS-GPSDD-GDD28S","name":"GPSDD gps ติดตามรถ รุ่น GDD28s เซิร์ฟเวอร์ เสถียรที่สุด ตำแหน่งแม่นยำ ดูตำแหน่งรถ Online แบบเรียลทาม สั่งดับเครื่องได้ จีพีเอส"},{"sku":"TL-GPSDD-STEP-GRN","name":"GPSDD DoorStep สำหรับเหยียบขึ้นบนหลังคารถ บันได เหยียบขึ้นหลังคารถ อุปกรณ์ช่วยปีนขึ้นหลังคารถ แป้นเหยียบขึ้นหลังคารถ"},{"sku":"TL-GPSDD-STEP-SLV","name":"GPSDD DoorStep สำหรับเหยียบขึ้นบนหลังคารถ บันได เหยียบขึ้นหลังคารถ อุปกรณ์ช่วยปีนขึ้นหลังคารถ แป้นเหยียบขึ้นหลังคารถ"},{"sku":"TL-GPSDD-STEP-BLK","name":"GPSDD DoorStep สำหรับเหยียบขึ้นบนหลังคารถ บันได เหยียบขึ้นหลังคารถ อุปกรณ์ช่วยปีนขึ้นหลังคารถ แป้นเหยียบขึ้นหลังคารถ"},{"sku":"TL-GPSDD-STEP-RED","name":"GPSDD DoorStep สำหรับเหยียบขึ้นบนหลังคารถ บันได เหยียบขึ้นหลังคารถ อุปกรณ์ช่วยปีนขึ้นหลังคารถ แป้นเหยียบขึ้นหลังคารถ"},{"sku":"TL-GPSDD-GAUG","name":"GPSDD พวงกุญแจ เกจจ์วัดลมยางแบบแท่ง เกจจํวัดลมยางแบบพกพา สำหรับวัดลมยางรถยนต์ รถมอเตอร์ไซค์ ขนาดเล็ก พกพาสะดวก เพื่อใช้วัดแรงดันลมยาง ตรวจสอบมาตรฐานแรงดันลมยาง Car รถจักร ปั้มลม"},{"sku":"TL-GPSDD-SPEMETEC80","name":"GPS HUD SPEEDOMETER C80 ไมล์รถดิจิตอล เครืองวัดความเร็วรถแบบดิจิตอล ใช้ได้กับรถทุกประเภท รถยนต์ Car"},{"sku":"LIFE-BIJA-BINRS","name":"กล้องส่องทางไกล Bijia คุณภาพสูง 12x22 ซูม 2 เลนส์ ภาพสวย คมชัด ไม่เบลอ คุณภาพระดับ High Def แข็งแรง น้ำหนักเบา มีสายคล้องและถุงคาดเข็มขัด กลางแจ้ง เดินป่า"},{"sku":"LIFE-GPSDD-UMBE-BRWN","name":"GPSDD ร่มพับขนาดใหญ่ ร่มยักษ์ ป้องกันฝนได้มากถึง 4 คน ไม่ต้องกลัวเปียก ร่มกอล์ฟ ร่มกันแดด ร่มกันฝน  ร่มพับ 10 โครง"},{"sku":"LIFE-GPSDD-UMBE-PURP","name":"GPSDD ร่มพับขนาดใหญ่ ร่มยักษ์ ป้องกันฝนได้มากถึง 4 คน ไม่ต้องกลัวเปียก ร่มกอล์ฟ ร่มกันแดด ร่มกันฝน  ร่มพับ 10 โครง"},{"sku":"LIFE-GPSDD-UMBE-RED","name":"GPSDD ร่มพับขนาดใหญ่ ร่มยักษ์ ป้องกันฝนได้มากถึง 4 คน ไม่ต้องกลัวเปียก ร่มกอล์ฟ ร่มกันแดด ร่มกันฝน  ร่มพับ 10 โครง"},{"sku":"LIFE-GPSDD-UMBE-GRN","name":"GPSDD ร่มพับขนาดใหญ่ ร่มยักษ์ ป้องกันฝนได้มากถึง 4 คน ไม่ต้องกลัวเปียก ร่มกอล์ฟ ร่มกันแดด ร่มกันฝน  ร่มพับ 10 โครง"},{"sku":"LIFE-GPSDD-UMBE-BLU","name":"GPSDD ร่มพับขนาดใหญ่ ร่มยักษ์ ป้องกันฝนได้มากถึง 4 คน ไม่ต้องกลัวเปียก ร่มกอล์ฟ ร่มกันแดด ร่มกันฝน  ร่มพับ 10 โครง"},{"sku":"LIFE-GPSDD-UMBE-NAVY","name":"GPSDD ร่มพับขนาดใหญ่ ร่มยักษ์ ป้องกันฝนได้มากถึง 4 คน ไม่ต้องกลัวเปียก ร่มกอล์ฟ ร่มกันแดด ร่มกันฝน  ร่มพับ 10 โครง"},{"sku":"LIFE-GPSDD-FIBER-30X30-GRN","name":"GPSDD ผ้าไมโครไฟเบอร์ อย่างหนา 500 GRM ซึมซับน้ำได้ดีเยี่ยม ไม่เป็นขุย ใช้ทำความสะอาดอุปกรณ์ หรือทำความสะอาดรถได้เป็นอย่างดี Car รถยนต์ ล้างรถ"},{"sku":"LIFE-GPSDD-FIBER-30X40-GRN","name":"GPSDD ผ้าไมโครไฟเบอร์ อย่างหนา 500 GRM ซึมซับน้ำได้ดีเยี่ยม ไม่เป็นขุย ใช้ทำความสะอาดอุปกรณ์ หรือทำความสะอาดรถได้เป็นอย่างดี Car รถยนต์ ล้างรถ"},{"sku":"LIFE-GPSDD-FIBER-30X30-BLU","name":"GPSDD ผ้าไมโครไฟเบอร์ อย่างหนา 500 GRM ซึมซับน้ำได้ดีเยี่ยม ไม่เป็นขุย ใช้ทำความสะอาดอุปกรณ์ หรือทำความสะอาดรถได้เป็นอย่างดี Car รถยนต์ ล้างรถ"},{"sku":"LIFE-GPSDD-FIBER-30X40-BLU","name":"GPSDD ผ้าไมโครไฟเบอร์ อย่างหนา 500 GRM ซึมซับน้ำได้ดีเยี่ยม ไม่เป็นขุย ใช้ทำความสะอาดอุปกรณ์ หรือทำความสะอาดรถได้เป็นอย่างดี Car รถยนต์ ล้างรถ"},{"sku":"LIFE-GPSDD-FIBER-30X30-YEL","name":"GPSDD ผ้าไมโครไฟเบอร์ อย่างหนา 500 GRM ซึมซับน้ำได้ดีเยี่ยม ไม่เป็นขุย ใช้ทำความสะอาดอุปกรณ์ หรือทำความสะอาดรถได้เป็นอย่างดี Car รถยนต์ ล้างรถ"},{"sku":"LIFE-GPSDD-FIBER-30X40-YEL","name":"GPSDD ผ้าไมโครไฟเบอร์ อย่างหนา 500 GRM ซึมซับน้ำได้ดีเยี่ยม ไม่เป็นขุย ใช้ทำความสะอาดอุปกรณ์ หรือทำความสะอาดรถได้เป็นอย่างดี Car รถยนต์ ล้างรถ"},{"sku":"AUTO-GPSDD-BTRCHA","name":"เครื่องชาร์จแบต 12V เครื่องชาร์จแบตรถยนต์ เครื่องชาร์จแบต รถมอเตอร์ไซค์ ชาร์จได้โดยไม่ต้องถอดขั้วแบต แบตเต็มตัดอัตโนมัติ Motorcycle เครื่องชาร์จแบตเตอรี่"},{"sku":"GPS-GPSDD-GDT02L-4W-RL-SIM-TESTER","name":"GPS ติดตามรถ รุ่น GDT02L (4W-RL-SIM) แถมปากกาวัดไฟ"}];
+const SKU_BY_ID = Object.fromEntries(SKU_DATA.map(s => [s.sku, s.name]));
+
+const STATUS_INFO = {
+  ordered:   { label: 'รอจัดส่งจากโรงงาน', color: '#f59e0b', bg: '#fef3c7', step: 1 },
+  shipped:   { label: 'ออกจากโรงงานแล้ว',  color: '#3b82f6', bg: '#dbeafe', step: 2 },
+  transit:   { label: 'อยู่ระหว่างขนส่ง',  color: '#6366f1', bg: '#e0e7ff', step: 3 },
+  arrived:   { label: 'ถึงไทยแล้ว',         color: '#8b5cf6', bg: '#ede9fe', step: 4 },
+  warehouse: { label: 'ส่งถึงคลังแล้ว',     color: '#06b6d4', bg: '#cffafe', step: 5 },
+  complete:  { label: 'รับของเรียบร้อย',    color: '#10b981', bg: '#d1fae5', step: 6 }
+};
+
+/* ============ State ============ */
+const state = {
+  mode: null, // 'owner' | 'staff'
+  view: null,
+  currentId: null,
+  filter: 'all'
+};
+
+/* ============ Cloud Sync Config ============ */
+// วาง Web app URL จาก Apps Script ที่ deploy แล้ว (ลงท้ายด้วย /exec)
+// ปล่อย '' ไว้  จะใช้งานแบบ offline-only (เก็บใน localStorage อย่างเดียว)
+const CLOUD_CONFIG = {
+  webAppUrl: 'https://script.google.com/macros/s/AKfycbyP8o6D3VNMe7weIAP-Gx-2QEn-feezsrSvhUM82WU5VWUb12Xrrha81KnPNZn0_0pQ8w/exec'
+};
+const SYNC_QUEUE_KEY = 'shipments_pendingSync';
+const STORAGE_KEY = 'shipments';
+
+function cloudEnabled() { return !!CLOUD_CONFIG.webAppUrl; }
+function isOnline() { return typeof navigator === 'undefined' ? true : navigator.onLine !== false; }
+
+async function cloudCall(action, body) {
+  if (!cloudEnabled()) throw new Error('cloud-disabled');
+  const res = await fetch(CLOUD_CONFIG.webAppUrl, {
+    method: 'POST',
+    body: JSON.stringify(Object.assign({ action }, body || {})),
+    redirect: 'follow'
+  });
+  if (!res.ok) throw new Error('http-' + res.status);
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || 'server-error');
+  return data.data;
+}
+
+function setSyncStatus(state, msg) {
+  const el = document.getElementById('sync-dot');
+  if (!el) return;
+  if (!cloudEnabled()) { el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+  el.className = state || '';
+  el.textContent = msg || (
+    state === 'online'  ? 'ออนไลน์' :
+    state === 'offline' ? 'ออฟไลน์' :
+    state === 'queued'  ? 'รอ sync' :
+    state === 'syncing' ? 'กำลัง sync' : ''
+  );
+}
+
+/* ============ Pending sync queue ============ */
+function readQueue() {
+  try { return JSON.parse(localStorage.getItem(SYNC_QUEUE_KEY) || '[]'); }
+  catch { return []; }
+}
+function writeQueue(q) {
+  try { localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(q)); } catch {}
+}
+function enqueueOp(op) {
+  const q = readQueue();
+  // ถ้ามี op save/delete ของ id เดิมอยู่แล้ว ให้แทนที่ (เอาค่าล่าสุดพอ)
+  const sameTarget = o => {
+    if (op.action !== o.action) return false;
+    if (op.action === 'delete') return o.id === op.id;
+    if (op.action === 'save')   return o.payload?.shipment?.id === op.payload?.shipment?.id;
+    return false;
+  };
+  const filtered = q.filter(o => !sameTarget(o));
+  filtered.push(Object.assign({ queuedAt: Date.now() }, op));
+  writeQueue(filtered);
+  setSyncStatus('queued', `รอ sync (${filtered.length})`);
+}
+
+async function drainQueue() {
+  if (!cloudEnabled() || !isOnline()) return;
+  const q = readQueue();
+  if (q.length === 0) return;
+  setSyncStatus('syncing', `กำลัง sync (${q.length})`);
+  const remaining = [];
+  for (const op of q) {
+    try {
+      await cloudCall(op.action, op.action === 'save' ? { payload: op.payload } : { id: op.id });
+    } catch (e) {
+      remaining.push(op);
+    }
+  }
+  writeQueue(remaining);
+  setSyncStatus(remaining.length === 0 ? 'online' : 'queued',
+    remaining.length === 0 ? 'ออนไลน์' : `รอ sync (${remaining.length})`);
+}
+
+/* ============ Cloud writers (fire-and-forget, auto-queue) ============ */
+function buildCloudPayload(s) {
+  // แนบ cost snapshot ไปด้วย ให้ sheet "Costs" มีข้อมูลล่าสุด
+  let costSnapshot = null;
+  try { costSnapshot = calcCosts(s); } catch {}
+  return { shipment: s, costSnapshot };
+}
+
+function cloudPush(s) {
+  if (!cloudEnabled()) return;
+  const payload = buildCloudPayload(s);
+  if (!isOnline()) { enqueueOp({ action: 'save', payload }); return; }
+  setSyncStatus('syncing');
+  cloudCall('save', { payload })
+    .then(() => { if (readQueue().length === 0) setSyncStatus('online'); else drainQueue(); })
+    .catch(() => { enqueueOp({ action: 'save', payload }); });
+}
+
+function cloudDelete(id) {
+  if (!cloudEnabled()) return;
+  if (!isOnline()) { enqueueOp({ action: 'delete', id }); return; }
+  setSyncStatus('syncing');
+  cloudCall('delete', { id })
+    .then(() => { if (readQueue().length === 0) setSyncStatus('online'); else drainQueue(); })
+    .catch(() => { enqueueOp({ action: 'delete', id }); });
+}
+
+/* ============ Storage (localStorage = source of truth สำหรับ runtime; cloud = sync target) ============ */
+function loadShipments() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
+  catch { return []; }
+}
+function saveShipmentsLocal(arr) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+    return true;
+  } catch (e) {
+    toast('พื้นที่เก็บข้อมูลเต็ม — ลองลบรูปภาพบางส่วน', 'error');
+    return false;
+  }
+}
+// คงชื่อเดิมไว้เพื่อ backward-compat (ใช้ตอนสร้าง shipment ใหม่)
+function saveShipments(arr) { return saveShipmentsLocal(arr); }
+
+function getShipment(id) { return loadShipments().find(s => s.id === id); }
+
+function updateShipment(id, updater) {
+  const all = loadShipments();
+  const idx = all.findIndex(s => s.id === id);
+  if (idx === -1) return false;
+  all[idx] = updater(all[idx]);
+  all[idx].updatedAt = new Date().toISOString();
+  if (!saveShipmentsLocal(all)) return false;
+  cloudPush(all[idx]);
+  return true;
+}
+function deleteShipment(id) {
+  const all = loadShipments().filter(s => s.id !== id);
+  if (!saveShipmentsLocal(all)) return false;
+  cloudDelete(id);
+  return true;
+}
+
+/* ============ Bootstrap from cloud (with localStorage fallback) ============ */
+async function bootstrapFromCloud() {
+  if (!cloudEnabled()) { setSyncStatus(); return; }
+  setSyncStatus('syncing', 'กำลังโหลด...');
+  try {
+    const remote = await cloudCall('list');
+    if (Array.isArray(remote)) {
+      const local = loadShipments();
+      const localById = Object.fromEntries(local.map(s => [s.id, s]));
+      const remoteIds = new Set(remote.map(r => r.id));
+      // shipments ที่อยู่ใน local แต่ cloud ยังไม่มี — เก็บไว้ + queue ไป sync ขึ้น cloud
+      const localOnly = local.filter(s => !remoteIds.has(s.id));
+      localOnly.forEach(s => enqueueOp({ action: 'save', payload: buildCloudPayload(s) }));
+      // merge: เอา photos จาก local มาเติม (รูปไม่ได้ขึ้น cloud)
+      const mergedRemote = remote.map(r => {
+        const l = localById[r.id];
+        if (l) {
+          if (l.stepB?.photos?.length && r.stepB) r.stepB.photos = l.stepB.photos;
+          if (l.stepE?.photos?.length && r.stepE) r.stepE.photos = l.stepE.photos;
+        }
+        return r;
+      });
+      saveShipmentsLocal(mergedRemote.concat(localOnly));
+    }
+    setSyncStatus('online');
+  } catch (e) {
+    setSyncStatus('offline', 'ออฟไลน์ — ใช้ข้อมูลในเครื่อง');
+  }
+  drainQueue();
+}
+function nextShipmentId() {
+  const beYear2 = String((new Date().getFullYear() + 543) % 100).padStart(2, '0');
+  const prefix = `SH-${beYear2}-`;
+  const all = loadShipments();
+  const max = all.filter(s => s.id.startsWith(prefix))
+    .reduce((m, s) => Math.max(m, parseInt(s.id.slice(prefix.length), 10) || 0), 0);
+  return `${prefix}${String(max + 1).padStart(3, '0')}`;
+}
+
+/* ============ Utilities ============ */
+function computeStatus(s) {
+  if (s.confirmed) return 'complete';
+  if (s.stepE && s.stepE.completed) return 'warehouse';
+  if (s.stepD && s.stepD.completed) return 'arrived';
+  if (s.stepC && s.stepC.completed) return 'transit';
+  if (s.stepB && s.stepB.completed) return 'shipped';
+  return 'ordered';
+}
+function fmtBaht(n, decimals = 2) {
+  if (n == null || isNaN(n)) return '-';
+  return Number(n).toLocaleString('th-TH', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+function fmtNum(n) {
+  if (n == null || isNaN(n)) return '-';
+  return Number(n).toLocaleString('th-TH');
+}
+function fmtDate(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  const day = String(d.getDate()).padStart(2, '0');
+  const mon = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'][d.getMonth()];
+  const year = (d.getFullYear() + 543) % 100;
+  return `${day} ${mon} ${year}`;
+}
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function shortName(s, max = 30) {
+  if (!s) return '-';
+  const str = String(s);
+  return str.length > max ? str.slice(0, max - 1) + '…' : str;
+}
+
+const ALLOC_LABEL = {
+  volume: 'แบ่งตามปริมาตร (คิว)',
+  weight: 'แบ่งตามน้ำหนัก (กก.)',
+  boxes:  'แบ่งตามจำนวนลัง',
+  yuan:   'แบ่งตามราคาสินค้า (¥)'
+};
+function calcCosts(s) {
+  if (!s.stepA || !s.stepA.items || s.stepA.items.length === 0) return null;
+  const items = s.stepA.items;
+  const rate = Number(s.stepA?.exchangeRate) || 0;
+
+  const shippingCost = Number(s.stepD?.shippingCost) || 0;
+  const customs = Number(s.stepD?.customs) || 0;
+  const vat = Number(s.stepD?.vat) || 0;
+  const tpiToNim = s.stepC?.carrier === 'TPI' ? (Number(s.stepD?.tpiToNim) || 0) : 0;
+  const nim = Number(s.stepE?.nimExpressCost) || 0;
+  const totalExtra = shippingCost + customs + vat + tpiToNim + nim;
+
+  const itemValByMethod = (it, m) => {
+    if (m === 'volume') return Number(it.volume) || 0;
+    if (m === 'weight') return Number(it.weight) || 0;
+    if (m === 'boxes')  return Number(it.boxes) || 0;
+    if (m === 'yuan')   return Number(it.yuanAmount) || 0;
+    return 0;
+  };
+  const sumByMethod = m => items.reduce((sum, it) => sum + itemValByMethod(it, m), 0);
+
+  const chosen = s.allocMethod || 'volume';
+  let effective = chosen;
+  if (sumByMethod(effective) <= 0) {
+    effective = ['boxes', 'yuan', 'weight', 'volume'].find(m => sumByMethod(m) > 0) || chosen;
+  }
+  const totalShare = sumByMethod(effective);
+
+  const perItem = items.map(it => {
+    // Backward-compat: derive boxes/perBox if old shape with quantity
+    const boxes = it.boxes != null ? Number(it.boxes) : 1;
+    const perBox = it.perBox != null ? Number(it.perBox) : Number(it.quantity || 0);
+    const totalPieces = boxes * perBox;
+    const yuan = Number(it.yuanAmount) || 0;
+    const baht = yuan * rate;
+    let share = 0;
+    if (items.length === 1) share = 1;
+    else if (totalShare > 0) share = itemValByMethod(it, effective) / totalShare;
+    const allocExtra = totalExtra * share;
+    const totalCost = baht + allocExtra;
+    const perUnit = totalPieces > 0 ? totalCost / totalPieces : 0;
+    return {
+      name: it.name || it.sku || '-',
+      sku: it.sku,
+      boxes, perBox, totalPieces,
+      yuan, baht,
+      weight: Number(it.weight) || 0,
+      volume: Number(it.volume) || 0,
+      share, allocExtra, totalCost, perUnit
+    };
+  });
+
+  const totalYuan = sumByMethod('yuan');
+  const totalProduct = totalYuan * rate;
+  const totalBoxes = sumByMethod('boxes');
+  const totalWeight = sumByMethod('weight');
+  const totalVolume = sumByMethod('volume');
+  const totalPieces = perItem.reduce((s, p) => s + p.totalPieces, 0);
+
+  return {
+    perItem, totalProduct, totalExtra,
+    totalYuan, totalBoxes, totalWeight, totalVolume, totalPieces,
+    shippingCost, customs, vat, tpiToNim, nim, rate,
+    grandTotal: totalProduct + totalExtra,
+    allocMethod: chosen,
+    effectiveAlloc: effective,
+    allocFellBack: effective !== chosen
+  };
+}
+
+/* ============ Toast / Modal ============ */
+let toastTimer;
+function toast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.className = 'toast show ' + type;
+  t.textContent = msg;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.className = 'toast ' + type, 2200);
+}
+function confirmModal(title, message, onYes, yesText = 'ยืนยัน', yesClass = 'btn-primary') {
+  const bd = document.getElementById('modal-backdrop');
+  const mc = document.getElementById('modal-content');
+  mc.innerHTML = `
+    <h3>${escapeHtml(title)}</h3>
+    <p>${escapeHtml(message)}</p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="modal-cancel">ยกเลิก</button>
+      <button class="btn ${yesClass}" id="modal-yes">${escapeHtml(yesText)}</button>
+    </div>`;
+  bd.classList.add('show');
+  document.getElementById('modal-cancel').onclick = () => bd.classList.remove('show');
+  document.getElementById('modal-yes').onclick = () => {
+    bd.classList.remove('show');
+    onYes();
+  };
+}
+
+/* ============ Image processing ============ */
+function compressImage(file, maxDim = 1024, quality = 0.75) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > h && w > maxDim) { h = h * (maxDim / w); w = maxDim; }
+        else if (h > maxDim) { w = w * (maxDim / h); h = maxDim; }
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(cv.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ============ Renderer ============ */
+function renderTopbar(title, showBack = true, extras = '') {
+  const t = document.getElementById('topbar');
+  const modeName = state.mode === 'owner' ? 'เจ้าของ' : (state.mode === 'staff' ? 'พนักงาน' : '');
+  t.innerHTML = `
+    ${showBack ? `<button class="back-btn" onclick="back()">←</button>` : `<div style="width:8px"></div>`}
+    <h1>${escapeHtml(title)}</h1>
+    ${state.mode ? `<button class="switch-btn" onclick="switchMode()">${modeName} ↻</button>` : ''}
+    ${extras}
+  `;
+}
+
+function renderBottomBar(html) {
+  const b = document.getElementById('bottom-bar');
+  if (!html) { b.innerHTML = ''; b.style.display = 'none'; return; }
+  b.innerHTML = `<div class="bottom-bar">${html}</div>`;
+  b.style.display = 'block';
+}
+
+function back() {
+  if (state.view === 'owner-dashboard' || state.view === 'staff-dashboard') {
+    state.mode = null;
+    state.view = null;
+    render();
+  } else if (state.view && state.view.startsWith('owner-')) {
+    state.view = 'owner-dashboard';
+    state.currentId = null;
+    render();
+  } else if (state.view && state.view.startsWith('staff-')) {
+    state.view = 'staff-dashboard';
+    state.currentId = null;
+    render();
+  } else {
+    state.view = null;
+    state.mode = null;
+    render();
+  }
+}
+
+function switchMode() {
+  confirmModal('สลับโหมด', 'ต้องการกลับไปหน้าเลือกโหมดหรือไม่?', () => {
+    state.mode = null;
+    state.view = null;
+    state.currentId = null;
+    render();
+  }, 'ใช่', 'btn-primary');
+}
+
+function render() {
+  const main = document.getElementById('main');
+  if (!state.mode) return renderModeSelect();
+  if (state.mode === 'owner') {
+    if (!state.view || state.view === 'owner-dashboard') return renderOwnerDashboard();
+    if (state.view === 'owner-new') return renderOwnerNew();
+    if (state.view === 'owner-detail') return renderOwnerDetail();
+    if (state.view === 'owner-step-a') return renderStepA();
+    if (state.view === 'owner-step-b') return renderStepB();
+    if (state.view === 'owner-step-c') return renderStepC();
+    if (state.view === 'owner-step-d') return renderStepD();
+    if (state.view === 'owner-step-e') return renderStepE();
+  }
+  if (state.mode === 'staff') {
+    if (!state.view || state.view === 'staff-dashboard') return renderStaffDashboard();
+    if (state.view === 'staff-detail') return renderStaffDetail();
+    if (state.view === 'staff-step-e') return renderStepE();
+  }
+}
+
+/* ============ Views: Mode select ============ */
+function renderModeSelect() {
+  document.getElementById('topbar').innerHTML = `
+    <div style="width:8px"></div>
+    <h1>ระบบติดตามนำเข้าสินค้าจากจีน</h1>
+  `;
+  renderBottomBar('');
+  document.getElementById('main').innerHTML = `
+    <div class="mode-screen">
+      <div class="mode-logo">📦</div>
+      <h2 class="mode-title">ระบบติดตามนำเข้าสินค้าจากจีน</h2>
+      <p class="mode-subtitle">เลือกโหมดการใช้งาน</p>
+      <div class="mode-cards">
+        <button class="mode-card" onclick="selectMode('owner')">
+          <div class="icon owner">👔</div>
+          <div class="info">
+            <h3>เจ้าของ</h3>
+            <p>บันทึก / ติดตาม / คำนวณต้นทุน</p>
+          </div>
+          <div class="arrow">›</div>
+        </button>
+        <button class="mode-card" onclick="selectMode('staff')">
+          <div class="icon staff">🚚</div>
+          <div class="info">
+            <h3>พนักงาน</h3>
+            <p>รับของหน้าคลัง บันทึกค่าขนส่ง</p>
+          </div>
+          <div class="arrow">›</div>
+        </button>
+      </div>
+    </div>
+  `;
+}
+function selectMode(m) {
+  state.mode = m;
+  state.view = m + '-dashboard';
+  render();
+}
+
+/* ============ Views: Owner Dashboard ============ */
+function renderOwnerDashboard() {
+  renderTopbar('ภาพรวม Shipment', false);
+  const all = loadShipments().slice().sort((a,b)=> b.id.localeCompare(a.id));
+  const stats = {
+    total: all.length,
+    inTransit: all.filter(s => ['shipped','transit','arrived'].includes(computeStatus(s))).length,
+    pendingReceive: all.filter(s => ['arrived','warehouse'].includes(computeStatus(s)) && !s.confirmed).length,
+    completed: all.filter(s => s.confirmed).length
+  };
+
+  const filtered = state.filter === 'all' ? all
+    : state.filter === 'pending' ? all.filter(s => !s.confirmed)
+    : state.filter === 'transit' ? all.filter(s => ['shipped','transit','arrived'].includes(computeStatus(s)))
+    : state.filter === 'done' ? all.filter(s => s.confirmed)
+    : all;
+
+  let listHtml = '';
+  if (filtered.length === 0) {
+    listHtml = `<div class="empty"><div class="icon">📦</div><p>ยังไม่มี Shipment<br>กดปุ่มด้านล่างเพื่อสร้างใหม่</p></div>`;
+  } else {
+    listHtml = filtered.map(s => renderShipmentCard(s, 'owner-detail')).join('');
+  }
+
+  document.getElementById('main').innerHTML = `
+    <div class="summary-grid">
+      <div class="summary-card"><div class="label">ทั้งหมด</div><div class="value">${stats.total}</div></div>
+      <div class="summary-card orange"><div class="label">กำลังขนส่ง</div><div class="value">${stats.inTransit}</div></div>
+      <div class="summary-card purple"><div class="label">รอรับ</div><div class="value">${stats.pendingReceive}</div></div>
+      <div class="summary-card green"><div class="label">เสร็จสิ้น</div><div class="value">${stats.completed}</div></div>
+    </div>
+    <div class="filter-tabs">
+      ${['all','pending','transit','done'].map(f => {
+        const label = {all:'ทั้งหมด', pending:'ยังไม่เสร็จ', transit:'กำลังขนส่ง', done:'เสร็จสิ้น'}[f];
+        return `<button class="filter-tab ${state.filter===f?'active':''}" onclick="setFilter('${f}')">${label}</button>`;
+      }).join('')}
+    </div>
+    <div class="section-header"><h2>รายการ Shipment</h2></div>
+    ${listHtml}
+    <button class="fab" onclick="newShipment()">＋ Shipment ใหม่</button>
+  `;
+  renderBottomBar('');
+}
+function setFilter(f) { state.filter = f; render(); }
+function newShipment() { state.view = 'owner-new'; render(); }
+
+function renderShipmentCard(s, targetView) {
+  const status = computeStatus(s);
+  const info = STATUS_INFO[status];
+  const items = s.stepA?.items || [];
+  const skuLine = items.map(it => {
+    const label = it.name || it.sku || '-';
+    const totalQty = (Number(it.boxes) || 0) * (Number(it.perBox) || 0) || Number(it.quantity) || 0;
+    return `${shortName(label)} ×${fmtNum(totalQty)}`;
+  }).join(', ');
+  const costs = calcCosts(s);
+  const totalCost = costs ? costs.grandTotal : 0;
+  return `
+    <div class="shipment-card" onclick="openShipment('${s.id}', '${targetView}')">
+      <div class="head">
+        <span class="id">${s.id}</span>
+        <span class="badge" style="background:${info.bg}; color:${info.color}">
+          <span class="status-dot" style="background:${info.color}"></span>${info.label}
+        </span>
+      </div>
+      ${s.stepA ? `
+      <div class="meta">
+        <span>📅 ${fmtDate(s.stepA.orderDate)}</span>
+        ${s.stepC?.carrier ? `<span>🚛 ${s.stepC.carrier}</span>` : ''}
+        ${s.stepC?.weight ? `<span>⚖️ ${fmtNum(s.stepC.weight)} กก.</span>` : ''}
+        ${s.stepC?.boxes ? `<span>📦 ${s.stepC.boxes} กล่อง</span>` : ''}
+      </div>
+      ${skuLine ? `<div class="sku-list">${escapeHtml(skuLine)}</div>` : ''}
+      ${costs ? `
+      <div class="footer">
+        <span class="total">รวมต้นทุน <strong>${fmtBaht(totalCost)} ฿</strong></span>
+        <span style="font-size:13px;color:var(--text-muted)">${items.length} กลุ่ม</span>
+      </div>` : ''}
+      ` : ''}
+      <div class="progress-line"><div class="fill" style="width:${(info.step/6)*100}%"></div></div>
+    </div>
+  `;
+}
+function openShipment(id, view) {
+  state.currentId = id;
+  state.view = view;
+  render();
+}
+
+/* ============ Views: Create new Shipment ============ */
+function renderOwnerNew() {
+  renderTopbar('สร้าง Shipment ใหม่');
+  const newId = nextShipmentId();
+  document.getElementById('main').innerHTML = `
+    <div class="form-section">
+      <h3><span class="step-badge">Step A</span> ข้อมูลคำสั่งซื้อ</h3>
+      <div class="field">
+        <label>รหัส Shipment</label>
+        <input type="text" id="newId" value="${newId}" readonly style="background:var(--bg);font-weight:600;color:var(--primary)">
+        <div class="field-hint">รหัสจะถูกสร้างอัตโนมัติ</div>
+      </div>
+      <div class="field-grid">
+        <div class="field">
+          <label>วันที่สั่งซื้อ <span class="req">*</span></label>
+          <input type="date" id="orderDate" value="${todayISO()}">
+        </div>
+        <div class="field">
+          <label>อัตราแลกเปลี่ยน ¥→฿ <span class="req">*</span></label>
+          <input type="number" id="exchangeRate" min="0" step="0.0001" inputmode="decimal" value="5.0">
+        </div>
+      </div>
+      ${renderAllocMethodPicker('volume')}
+    </div>
+    <div class="form-section">
+      <h3>📦 รายการกลุ่มสินค้า</h3>
+      <div id="items-container"></div>
+      <button class="add-item-btn" onclick="addItemRow()">＋ เพิ่มกลุ่มสินค้า</button>
+    </div>
+  `;
+  renderBottomBar(`
+    <button class="btn btn-secondary" onclick="back()">ยกเลิก</button>
+    <button class="btn btn-primary" onclick="saveNewShipment()">💾 บันทึก Shipment</button>
+  `);
+  addItemRow();
+}
+
+function renderAllocMethodPicker(selected) {
+  return `
+    <div class="field">
+      <label>วิธีแบ่งค่าขนส่ง <span class="req">*</span></label>
+      <div class="alloc-grid">
+        ${[
+          {k:'volume', icon:'📐', label:'ตามปริมาตร', sub:'(คิว)'},
+          {k:'weight', icon:'⚖️', label:'ตามน้ำหนัก', sub:'(กก.)'},
+          {k:'boxes',  icon:'📦', label:'ตามจำนวนลัง', sub:''},
+          {k:'yuan',   icon:'¥',  label:'ตามราคาสินค้า', sub:'(หยวน)'}
+        ].map(o => `
+          <label class="alloc-card ${selected===o.k?'selected':''}" onclick="selectAlloc('${o.k}')" id="alloc-${o.k}">
+            <input type="radio" name="allocMethod" value="${o.k}" ${selected===o.k?'checked':''}>
+            <div class="alloc-icon">${o.icon}</div>
+            <div class="alloc-label">${o.label}</div>
+            ${o.sub ? `<div class="alloc-sub">${o.sub}</div>` : ''}
+          </label>
+        `).join('')}
+      </div>
+      <div class="field-hint">ระบบจะคำนวณแบ่งค่าขนส่งและค่าใช้จ่ายอื่นๆ ตามวิธีที่เลือก</div>
+    </div>
+  `;
+}
+function selectAlloc(k) {
+  ['volume','weight','boxes','yuan'].forEach(m => {
+    const el = document.getElementById('alloc-' + m);
+    if (el) el.classList.toggle('selected', m === k);
+  });
+  const r = document.querySelector(`input[name="allocMethod"][value="${k}"]`);
+  if (r) r.checked = true;
+}
+
+let itemCounter = 0;
+function addItemRow(prefill) {
+  const cnt = document.getElementById('items-container');
+  itemCounter++;
+  const idx = itemCounter;
+  const div = document.createElement('div');
+  div.className = 'item-row';
+  div.dataset.idx = idx;
+  div.innerHTML = `
+    <div class="item-head">
+      <span class="item-num">รายการ #${cnt.children.length + 1}</span>
+      <button class="remove-btn" onclick="removeItemRow(${idx})">ลบ</button>
+    </div>
+    <div class="field">
+      <label>ชื่อกลุ่มสินค้า <span class="req">*</span></label>
+      <div class="combo" data-combo>
+        <input type="text" class="combo-input item-name" placeholder="พิมพ์ชื่อกลุ่ม หรือเลือกจาก SKU..." autocomplete="off">
+        <input type="hidden" class="item-sku">
+        <button type="button" class="combo-clear" onclick="comboClear(this.parentElement)">×</button>
+        <div class="combo-dropdown"></div>
+      </div>
+      <div class="field-hint">พิมพ์เองได้อิสระ หรือเลือก SKU จากรายการเพื่อเติมอัตโนมัติ</div>
+    </div>
+    <div class="field-grid">
+      <div class="field">
+        <label>จำนวนลัง <span class="req">*</span></label>
+        <input type="number" class="item-boxes" min="1" step="1" inputmode="numeric" placeholder="0">
+      </div>
+      <div class="field">
+        <label>ชิ้น/ลัง <span class="req">*</span></label>
+        <input type="number" class="item-perbox" min="1" step="1" inputmode="numeric" placeholder="0">
+      </div>
+    </div>
+    <div class="field">
+      <label>ราคารวม (¥ หยวน) <span class="req">*</span></label>
+      <input type="number" class="item-yuan" min="0" step="0.01" inputmode="decimal" placeholder="0">
+    </div>
+    <div class="field-grid">
+      <div class="field">
+        <label>น้ำหนักรวม (กก.)</label>
+        <input type="number" class="item-weight" min="0" step="0.001" inputmode="decimal" placeholder="ไม่บังคับ">
+      </div>
+      <div class="field">
+        <label>ปริมาตรรวม (คิว)</label>
+        <input type="number" class="item-volume" min="0" step="0.001" inputmode="decimal" placeholder="ไม่บังคับ">
+      </div>
+    </div>
+    <div class="item-summary"></div>
+  `;
+  cnt.appendChild(div);
+  initCombo(div.querySelector('[data-combo]'));
+  if (prefill) {
+    if (prefill.name) {
+      div.querySelector('.item-name').value = prefill.name;
+      div.querySelector('[data-combo]').classList.add('has-value');
+    }
+    if (prefill.sku) div.querySelector('.item-sku').value = prefill.sku;
+    div.querySelector('.item-boxes').value = prefill.boxes ?? '';
+    div.querySelector('.item-perbox').value = prefill.perBox ?? '';
+    div.querySelector('.item-yuan').value = prefill.yuanAmount ?? '';
+    div.querySelector('.item-weight').value = prefill.weight ?? '';
+    div.querySelector('.item-volume').value = prefill.volume ?? '';
+  }
+  const updateSummary = () => {
+    const boxes = parseFloat(div.querySelector('.item-boxes').value) || 0;
+    const perBox = parseFloat(div.querySelector('.item-perbox').value) || 0;
+    const total = boxes * perBox;
+    const summary = div.querySelector('.item-summary');
+    if (total > 0) {
+      summary.innerHTML = `<div style="font-size:13px;color:var(--primary);font-weight:500;padding:8px;background:var(--primary-50);border-radius:6px;margin-top:4px">รวม: ${fmtNum(total)} ชิ้น</div>`;
+    } else {
+      summary.innerHTML = '';
+    }
+  };
+  ['item-boxes', 'item-perbox'].forEach(c => {
+    div.querySelector('.' + c).addEventListener('input', updateSummary);
+  });
+  updateSummary();
+}
+
+/* ============ Searchable combobox (free text + SKU helper) ============ */
+function initCombo(combo) {
+  const input = combo.querySelector('.combo-input');
+  const hidden = combo.querySelector('.item-sku');
+  const dropdown = combo.querySelector('.combo-dropdown');
+
+  function showDropdown(query = '') {
+    const q = query.trim().toLowerCase();
+    let results = SKU_DATA;
+    if (q) {
+      results = SKU_DATA.filter(s =>
+        s.sku.toLowerCase().includes(q) ||
+        (s.name && s.name.toLowerCase().includes(q))
+      );
+    }
+    if (results.length === 0) {
+      dropdown.innerHTML = '<div class="combo-empty">ไม่พบ SKU ที่ตรงกัน — กดออกเพื่อใช้ข้อความที่พิมพ์</div>';
+    } else {
+      dropdown.innerHTML = results.slice(0, 100).map(s => {
+        const skuHl = q ? highlightMatch(s.sku, q) : escapeHtml(s.sku);
+        const nameHl = q ? highlightMatch(s.name, q) : escapeHtml(s.name || '');
+        return `<div class="combo-option" data-sku="${escapeHtml(s.sku)}" data-name="${escapeHtml(s.name || '')}">
+          <div class="opt-sku">${skuHl}</div>
+          ${s.name ? `<div class="opt-name">${nameHl}</div>` : ''}
+        </div>`;
+      }).join('');
+      [...dropdown.querySelectorAll('.combo-option')].forEach(opt => {
+        opt.addEventListener('mousedown', e => {
+          e.preventDefault();
+          comboSetValue(combo, opt.dataset.sku, opt.dataset.name);
+          dropdown.classList.remove('show');
+        });
+      });
+    }
+    dropdown.classList.add('show');
+  }
+
+  input.addEventListener('focus', () => showDropdown(input.value));
+  input.addEventListener('input', () => {
+    hidden.value = '';
+    if (input.value.trim()) combo.classList.add('has-value');
+    else combo.classList.remove('has-value');
+    showDropdown(input.value);
+  });
+  input.addEventListener('blur', () => {
+    setTimeout(() => { dropdown.classList.remove('show'); }, 180);
+  });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { dropdown.classList.remove('show'); input.blur(); }
+  });
+}
+function highlightMatch(text, q) {
+  if (!text) return '';
+  const safe = escapeHtml(text);
+  const re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig');
+  return safe.replace(re, '<mark>$1</mark>');
+}
+function comboSetValue(combo, sku, name) {
+  const input = combo.querySelector('.combo-input');
+  const hidden = combo.querySelector('.item-sku');
+  const displayName = name || SKU_BY_ID[sku] || '';
+  hidden.value = sku || '';
+  input.value = displayName ? `${sku} — ${displayName}` : (sku || '');
+  combo.classList.add('has-value');
+}
+function comboClear(combo) {
+  const input = combo.querySelector('.combo-input');
+  const hidden = combo.querySelector('.item-sku');
+  hidden.value = '';
+  input.value = '';
+  combo.classList.remove('has-value');
+  input.focus();
+}
+function removeItemRow(idx) {
+  const cnt = document.getElementById('items-container');
+  if (cnt.children.length <= 1) { toast('ต้องมีอย่างน้อย 1 รายการ', 'error'); return; }
+  const el = cnt.querySelector(`[data-idx="${idx}"]`);
+  if (el) el.remove();
+  [...cnt.children].forEach((c,i) => c.querySelector('.item-num').textContent = `รายการ #${i+1}`);
+}
+function collectItems() {
+  const rows = [...document.getElementById('items-container').children];
+  const items = [];
+  for (const r of rows) {
+    const name = r.querySelector('.item-name').value.trim();
+    const sku = r.querySelector('.item-sku').value.trim();
+    const boxes = parseFloat(r.querySelector('.item-boxes').value);
+    const perBox = parseFloat(r.querySelector('.item-perbox').value);
+    const yuan = parseFloat(r.querySelector('.item-yuan').value);
+    const weight = parseFloat(r.querySelector('.item-weight').value);
+    const volume = parseFloat(r.querySelector('.item-volume').value);
+    if (!name) { toast('กรุณากรอกชื่อกลุ่มสินค้าทุกรายการ', 'error'); return null; }
+    if (!boxes || boxes <= 0) { toast('กรุณากรอกจำนวนลังให้ครบ', 'error'); return null; }
+    if (!perBox || perBox <= 0) { toast('กรุณากรอกจำนวนชิ้น/ลังให้ครบ', 'error'); return null; }
+    if (isNaN(yuan) || yuan < 0) { toast('กรุณากรอกราคารวม (หยวน)', 'error'); return null; }
+    items.push({
+      name, sku: sku || null,
+      boxes, perBox,
+      yuanAmount: yuan,
+      weight: isNaN(weight) ? null : weight,
+      volume: isNaN(volume) ? null : volume
+    });
+  }
+  return items;
+}
+function saveNewShipment() {
+  const id = document.getElementById('newId').value;
+  const orderDate = document.getElementById('orderDate').value;
+  const exchangeRate = parseFloat(document.getElementById('exchangeRate').value);
+  const allocMethod = (document.querySelector('input[name="allocMethod"]:checked') || {}).value;
+  if (!orderDate) { toast('กรุณาเลือกวันที่สั่งซื้อ', 'error'); return; }
+  if (!exchangeRate || exchangeRate <= 0) { toast('กรุณากรอกอัตราแลกเปลี่ยน', 'error'); return; }
+  if (!allocMethod) { toast('กรุณาเลือกวิธีแบ่งค่าขนส่ง', 'error'); return; }
+  const items = collectItems();
+  if (!items) return;
+
+  const all = loadShipments();
+  if (all.some(s => s.id === id)) { toast('รหัสซ้ำ ลองรีเฟรชอีกครั้ง', 'error'); return; }
+  const now = new Date().toISOString();
+  const ship = {
+    id, createdAt: now, updatedAt: now,
+    allocMethod,
+    stepA: { orderDate, exchangeRate, items, completed: true },
+    stepB: null, stepC: null, stepD: null, stepE: null,
+    confirmed: false
+  };
+  all.push(ship);
+  if (!saveShipments(all)) return;
+  cloudPush(ship);
+  toast('บันทึก Shipment เรียบร้อย ✓', 'success');
+  state.currentId = id;
+  state.view = 'owner-detail';
+  render();
+}
+
+/* ============ Views: Owner Detail ============ */
+function renderOwnerDetail() {
+  const s = getShipment(state.currentId);
+  if (!s) { toast('ไม่พบ Shipment', 'error'); back(); return; }
+  renderTopbar(s.id);
+  const status = computeStatus(s);
+  const info = STATUS_INFO[status];
+  const costs = calcCosts(s);
+
+  const rate = Number(s.stepA?.exchangeRate) || 0;
+  const itemsHtml = (s.stepA?.items || []).map(it => {
+    const boxes = Number(it.boxes) || 0;
+    const perBox = Number(it.perBox) || 0;
+    const total = boxes * perBox || Number(it.quantity) || 0;
+    const yuan = Number(it.yuanAmount) || 0;
+    const baht = yuan * rate;
+    return `
+    <div class="data-row" style="flex-direction:column;align-items:stretch;gap:4px;padding:8px 0">
+      <div style="display:flex;justify-content:space-between;gap:8px">
+        <span style="font-weight:500">${escapeHtml(it.name || it.sku || '-')}</span>
+        <span class="v">¥${fmtBaht(yuan)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--text-secondary)">
+        <span>${boxes ? `${fmtNum(boxes)} ลัง × ${fmtNum(perBox)} ชิ้น = ${fmtNum(total)} ชิ้น` : ''}${it.weight ? ` · ${fmtNum(it.weight)} กก.` : ''}${it.volume ? ` · ${fmtNum(it.volume)} คิว` : ''}</span>
+        <span>≈ ${fmtBaht(baht)} ฿</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('main').innerHTML = `
+    <div class="detail-header">
+      <div class="id-row">
+        <h2>${s.id}</h2>
+        <span class="badge" style="background:${info.bg};color:${info.color}">${info.label}</span>
+      </div>
+      <div class="info-grid">
+        <div class="info-item">
+          <div class="label">วันสั่งซื้อ</div>
+          <div class="value">${fmtDate(s.stepA?.orderDate)}</div>
+        </div>
+        <div class="info-item">
+          <div class="label">ขนส่งโดย</div>
+          <div class="value">${s.stepC?.carrier || '-'}</div>
+        </div>
+        <div class="info-item">
+          <div class="label">รายการ</div>
+          <div class="value">${(s.stepA?.items || []).length} SKU</div>
+        </div>
+        <div class="info-item">
+          <div class="label">รวมจำนวน</div>
+          <div class="value">${fmtNum((s.stepA?.items || []).reduce((sum,it)=> sum + ((Number(it.boxes)||0) * (Number(it.perBox)||0) || (Number(it.quantity)||0)), 0))} ชิ้น</div>
+        </div>
+      </div>
+      <div class="progress-line"><div class="fill" style="width:${(info.step/6)*100}%"></div></div>
+    </div>
+
+    ${renderStepCard('A', 'ข้อมูลคำสั่งซื้อ', s.stepA?.completed, `
+      <div class="data-row"><span>วันที่สั่งซื้อ</span><span class="v">${fmtDate(s.stepA?.orderDate)}</span></div>
+      <div class="data-row"><span>อัตราแลกเปลี่ยน</span><span class="v">${rate ? rate.toFixed(4) + ' ฿/¥' : '-'}</span></div>
+      <div class="data-row"><span>วิธีแบ่งค่าขนส่ง</span><span class="v">${ALLOC_LABEL[s.allocMethod || 'volume']}</span></div>
+      ${itemsHtml}
+      <div class="data-row" style="margin-top:6px"><span>รวมยอดหยวน</span><span class="v">¥${fmtBaht((s.stepA?.items||[]).reduce((sum,it)=>sum+(Number(it.yuanAmount)||0),0))}</span></div>
+      <div class="data-row"><span>≈ บาท</span><span class="v">${fmtBaht(((s.stepA?.items||[]).reduce((sum,it)=>sum+(Number(it.yuanAmount)||0),0)) * rate)} ฿</span></div>
+    `, 'owner-step-a')}
+
+    ${renderStepCard('B', 'จัดส่งจากโรงงาน', s.stepB?.completed, s.stepB ? `
+      <div class="data-row"><span>วันจัดส่ง</span><span class="v">${fmtDate(s.stepB.shipDate)}</span></div>
+      ${s.stepB.photos?.length ? renderPhotoGridStatic(s.stepB.photos) : ''}
+    ` : '<div style="color:var(--text-muted)">ยังไม่ได้บันทึก</div>', 'owner-step-b', status === 'ordered')}
+
+    ${renderStepCard('C/F', 'น้ำหนัก / ขนส่ง', s.stepC?.completed, s.stepC ? `
+      <div class="data-row"><span>น้ำหนัก</span><span class="v">${fmtNum(s.stepC.weight)} กก.</span></div>
+      <div class="data-row"><span>จำนวนกล่อง</span><span class="v">${fmtNum(s.stepC.boxes)}</span></div>
+      <div class="data-row"><span>ปริมาตร</span><span class="v">${fmtNum(s.stepC.volume)} ลบ.ม.</span></div>
+      <div class="data-row"><span>ขนส่งโดย</span><span class="v">${s.stepC.carrier}</span></div>
+    ` : '<div style="color:var(--text-muted)">ยังไม่ได้บันทึก</div>', 'owner-step-c', status === 'shipped')}
+
+    ${renderStepCard('D', 'ถึงไทย / ค่าใช้จ่าย', s.stepD?.completed, s.stepD ? `
+      <div class="data-row"><span>วันถึงไทย</span><span class="v">${fmtDate(s.stepD.arrivalDate)}</span></div>
+      <div class="data-row"><span>ค่าขนส่งจีน-ไทย</span><span class="v">${fmtBaht(s.stepD.shippingCost)} ฿</span></div>
+      ${s.stepC?.carrier === 'NEXT' ? `
+        <div class="data-row"><span>ค่าศุลกากร</span><span class="v">${fmtBaht(s.stepD.customs)} ฿</span></div>
+        <div class="data-row"><span>ภาษีมูลค่าเพิ่ม</span><span class="v">${fmtBaht(s.stepD.vat)} ฿</span></div>
+      ` : `
+        <div class="data-row"><span>ค่าส่ง TPI → นิ่มซี่เส็ง</span><span class="v">${fmtBaht(s.stepD.tpiToNim ?? 100)} ฿</span></div>
+      `}
+    ` : '<div style="color:var(--text-muted)">ยังไม่ได้บันทึก</div>', 'owner-step-d', status === 'transit')}
+
+    ${renderStepCard('E', 'รับของเข้าคลัง', s.stepE?.completed, s.stepE ? `
+      <div class="data-row"><span>ค่า Nim Express</span><span class="v">${fmtBaht(s.stepE.nimExpressCost)} ฿</span></div>
+      ${s.stepE.photos?.length ? renderPhotoGridStatic(s.stepE.photos) : ''}
+      ${s.confirmed ? `<div class="data-row" style="color:var(--success)"><span>✓ ยืนยันรับของแล้ว</span><span class="v">${fmtDate(s.confirmedAt)}</span></div>` : ''}
+    ` : '<div style="color:var(--text-muted)">ยังไม่ได้บันทึก</div>', 'owner-step-e', status === 'arrived')}
+
+    ${costs ? renderCostSummary(costs, s) : ''}
+
+    ${s.stepE?.completed && !s.confirmed ? `
+      <div style="margin-top:14px">
+        <button class="btn btn-success" style="width:100%;padding:16px;font-size:16px" onclick="confirmReceive('${s.id}')">
+          ✓ ยืนยันรับของเสร็จสิ้น
+        </button>
+      </div>
+    ` : ''}
+    ${s.confirmed ? `
+      <div class="form-section" style="margin-top:14px;background:linear-gradient(135deg,#10b981,#059669);color:#fff;text-align:center">
+        <div style="font-size:36px;margin-bottom:6px">✓</div>
+        <div style="font-size:16px;font-weight:600">รับของเรียบร้อยแล้ว</div>
+        <div style="font-size:13px;opacity:0.9;margin-top:4px">${fmtDate(s.confirmedAt)}</div>
+      </div>
+    ` : ''}
+
+    <div style="margin-top:20px">
+      <button class="btn btn-danger" style="width:100%" onclick="confirmDelete('${s.id}')">🗑 ลบ Shipment นี้</button>
+    </div>
+  `;
+  renderBottomBar('');
+}
+
+function renderStepCard(num, title, completed, body, targetView, isCurrent = false) {
+  const cls = completed ? 'completed' : (isCurrent ? 'current' : '');
+  const action = targetView ? `<button class="step-action" onclick="event.stopPropagation();gotoStep('${targetView}')">${completed ? 'แก้ไข' : 'บันทึก'}</button>` : '';
+  return `
+    <div class="step-card ${cls}">
+      <div class="step-header">
+        <div class="step-num">${completed ? '✓' : num}</div>
+        <div class="step-title">
+          <div class="title">${title}</div>
+          <div class="subtitle">Step ${num}</div>
+        </div>
+        ${action}
+      </div>
+      <div class="step-body">${body}</div>
+    </div>
+  `;
+}
+function renderPhotoGridStatic(photos) {
+  return `<div class="photo-grid" style="margin-top:8px">${photos.map(p => `<div class="photo-thumb"><img src="${p}" alt=""></div>`).join('')}</div>`;
+}
+function gotoStep(view) { state.view = view; render(); }
+
+function renderCostSummary(costs, s) {
+  let html = `
+    <div class="cost-summary">
+      <h3>💰 สรุปต้นทุน</h3>
+      <div class="cost-row"><span>ค่าสินค้ารวม (¥${fmtBaht(costs.totalYuan)} × ${costs.rate ? costs.rate.toFixed(4) : '-'})</span><span>${fmtBaht(costs.totalProduct)} ฿</span></div>
+      ${costs.shippingCost ? `<div class="cost-row"><span>ค่าขนส่งจีน-ไทย</span><span>${fmtBaht(costs.shippingCost)} ฿</span></div>` : ''}
+      ${costs.customs ? `<div class="cost-row"><span>ค่าศุลกากร</span><span>${fmtBaht(costs.customs)} ฿</span></div>` : ''}
+      ${costs.vat ? `<div class="cost-row"><span>VAT</span><span>${fmtBaht(costs.vat)} ฿</span></div>` : ''}
+      ${costs.tpiToNim ? `<div class="cost-row"><span>ค่าส่ง TPI → นิ่มซี่เส็ง</span><span>${fmtBaht(costs.tpiToNim)} ฿</span></div>` : ''}
+      ${costs.nim ? `<div class="cost-row"><span>Nim Express</span><span>${fmtBaht(costs.nim)} ฿</span></div>` : ''}
+      <div class="cost-row total divider"><span>รวมทั้งหมด</span><span>${fmtBaht(costs.grandTotal)} ฿</span></div>
+    </div>
+  `;
+  if (costs.perItem.length > 0) {
+    const methodLabel = ALLOC_LABEL[costs.effectiveAlloc] || '-';
+    const fellBack = costs.allocFellBack
+      ? ` <span style="color:var(--warning);font-weight:400">(ข้อมูล${ALLOC_LABEL[costs.allocMethod]}ไม่ครบ — fallback)</span>`
+      : '';
+    html += `<div class="section-header"><h2>ต้นทุนต่อชิ้น · ${methodLabel}${fellBack}</h2></div>`;
+    html += costs.perItem.map(it => `
+      <div class="cost-sku-card">
+        <div class="sku-name">${escapeHtml(it.name)}</div>
+        ${it.sku && it.sku !== it.name ? `<div style="font-size:11px;color:var(--text-muted);margin-top:-4px;margin-bottom:6px">SKU: ${escapeHtml(it.sku)}</div>` : ''}
+        <div class="cost-detail"><span>จำนวน</span><span>${fmtNum(it.boxes)} ลัง × ${fmtNum(it.perBox)} = ${fmtNum(it.totalPieces)} ชิ้น</span></div>
+        ${it.weight ? `<div class="cost-detail"><span>น้ำหนัก</span><span>${fmtNum(it.weight)} กก.</span></div>` : ''}
+        ${it.volume ? `<div class="cost-detail"><span>ปริมาตร</span><span>${fmtNum(it.volume)} คิว</span></div>` : ''}
+        <div class="cost-detail"><span>ค่าสินค้า (¥${fmtBaht(it.yuan)})</span><span>${fmtBaht(it.baht)} ฿</span></div>
+        <div class="cost-detail"><span>ค่าขนส่ง+อื่นๆ (${(it.share*100).toFixed(1)}%)</span><span>${fmtBaht(it.allocExtra)} ฿</span></div>
+        <div class="cost-detail"><span>รวม</span><span>${fmtBaht(it.totalCost)} ฿</span></div>
+        <div class="cost-per-unit">
+          <span class="label">ต้นทุน/ชิ้น</span>
+          <span class="value">${fmtBaht(it.perUnit)} ฿</span>
+        </div>
+      </div>
+    `).join('');
+  }
+  return html;
+}
+
+function confirmDelete(id) {
+  confirmModal('ลบ Shipment', `ต้องการลบ ${id} หรือไม่? การกระทำนี้ไม่สามารถยกเลิกได้`, () => {
+    deleteShipment(id);
+    toast('ลบเรียบร้อย', 'success');
+    state.view = 'owner-dashboard';
+    state.currentId = null;
+    render();
+  }, 'ลบเลย', 'btn-danger');
+}
+
+/* ============ Step A (edit) ============ */
+function renderStepA() {
+  const s = getShipment(state.currentId);
+  if (!s) { back(); return; }
+  renderTopbar('Step A: แก้ไขคำสั่งซื้อ');
+  document.getElementById('main').innerHTML = `
+    <div class="form-section">
+      <h3><span class="step-badge">Step A</span> ข้อมูลคำสั่งซื้อ</h3>
+      <div class="field-grid">
+        <div class="field">
+          <label>วันที่สั่งซื้อ <span class="req">*</span></label>
+          <input type="date" id="orderDate" value="${s.stepA?.orderDate || todayISO()}">
+        </div>
+        <div class="field">
+          <label>อัตราแลกเปลี่ยน ¥→฿ <span class="req">*</span></label>
+          <input type="number" id="exchangeRate" min="0" step="0.0001" inputmode="decimal" value="${s.stepA?.exchangeRate ?? 5.0}">
+        </div>
+      </div>
+      ${renderAllocMethodPicker(s.allocMethod || 'volume')}
+    </div>
+    <div class="form-section">
+      <h3>📦 รายการกลุ่มสินค้า</h3>
+      <div id="items-container"></div>
+      <button class="add-item-btn" onclick="addItemRow()">＋ เพิ่มกลุ่มสินค้า</button>
+    </div>
+  `;
+  renderBottomBar(`
+    <button class="btn btn-secondary" onclick="back()">ยกเลิก</button>
+    <button class="btn btn-primary" onclick="saveStepA()">💾 บันทึก</button>
+  `);
+  (s.stepA?.items || []).forEach(it => addItemRow(it));
+  if (!(s.stepA?.items?.length)) addItemRow();
+}
+function saveStepA() {
+  const orderDate = document.getElementById('orderDate').value;
+  const exchangeRate = parseFloat(document.getElementById('exchangeRate').value);
+  const allocMethod = (document.querySelector('input[name="allocMethod"]:checked') || {}).value;
+  if (!orderDate) { toast('กรุณาเลือกวันสั่งซื้อ', 'error'); return; }
+  if (!exchangeRate || exchangeRate <= 0) { toast('กรุณากรอกอัตราแลกเปลี่ยน', 'error'); return; }
+  if (!allocMethod) { toast('กรุณาเลือกวิธีแบ่งค่าขนส่ง', 'error'); return; }
+  const items = collectItems();
+  if (!items) return;
+  if (!updateShipment(state.currentId, s => ({
+    ...s, allocMethod,
+    stepA: { orderDate, exchangeRate, items, completed: true }
+  }))) return;
+  toast('บันทึกเรียบร้อย ✓', 'success');
+  state.view = 'owner-detail';
+  render();
+}
+
+/* ============ Step B ============ */
+function renderStepB() {
+  const s = getShipment(state.currentId);
+  if (!s) { back(); return; }
+  renderTopbar('Step B: จัดส่งจากโรงงาน');
+  document.getElementById('main').innerHTML = `
+    <div class="form-section">
+      <h3><span class="step-badge">Step B</span> วันที่จัดส่งจากโรงงาน</h3>
+      <div class="field">
+        <label>วันที่จัดส่งจากโรงงาน <span class="req">*</span></label>
+        <input type="date" id="shipDate" value="${s.stepB?.shipDate || todayISO()}">
+      </div>
+      <div class="field">
+        <label>รูปภาพสินค้า/ใบส่งของ</label>
+        <div class="photo-grid" id="photo-grid"></div>
+        <label class="photo-add" style="display:inline-flex;margin-top:8px;width:96px">
+          <input type="file" accept="image/*" capture="environment" multiple onchange="addPhotos(this, 'B')">
+          ＋
+        </label>
+        <div class="field-hint">รูปจะถูกย่อขนาดอัตโนมัติเพื่อประหยัดพื้นที่</div>
+      </div>
+    </div>
+  `;
+  renderBottomBar(`
+    <button class="btn btn-secondary" onclick="back()">ยกเลิก</button>
+    <button class="btn btn-primary" onclick="saveStepB()">💾 บันทึก</button>
+  `);
+  tempPhotos = [...(s.stepB?.photos || [])];
+  renderPhotoEditor('photo-grid');
+}
+
+let tempPhotos = [];
+function renderPhotoEditor(containerId) {
+  const c = document.getElementById(containerId);
+  if (!c) return;
+  c.innerHTML = tempPhotos.map((p,i) => `
+    <div class="photo-thumb">
+      <img src="${p}" alt="">
+      <button class="delete-photo" onclick="removePhoto(${i}, '${containerId}')">×</button>
+    </div>
+  `).join('');
+}
+function removePhoto(i, containerId) {
+  tempPhotos.splice(i, 1);
+  renderPhotoEditor(containerId);
+}
+async function addPhotos(input, step) {
+  const files = [...input.files];
+  for (const f of files) {
+    try {
+      const data = await compressImage(f);
+      tempPhotos.push(data);
+    } catch (e) { toast('โหลดรูปไม่สำเร็จ', 'error'); }
+  }
+  input.value = '';
+  renderPhotoEditor('photo-grid');
+}
+function saveStepB() {
+  const shipDate = document.getElementById('shipDate').value;
+  if (!shipDate) { toast('กรุณาเลือกวันจัดส่ง', 'error'); return; }
+  if (!updateShipment(state.currentId, s => ({
+    ...s, stepB: { shipDate, photos: tempPhotos, completed: true }
+  }))) return;
+  toast('บันทึกเรียบร้อย ✓', 'success');
+  state.view = 'owner-detail';
+  render();
+}
+
+/* ============ Step C ============ */
+function renderStepC() {
+  const s = getShipment(state.currentId);
+  if (!s) { back(); return; }
+  renderTopbar('Step C/F: ขนส่ง');
+  const c = s.stepC || {};
+  document.getElementById('main').innerHTML = `
+    <div class="form-section">
+      <h3><span class="step-badge">Step C/F</span> ข้อมูลการขนส่ง</h3>
+      <div class="field-grid">
+        <div class="field">
+          <label>น้ำหนัก (กก.) <span class="req">*</span></label>
+          <input type="number" id="weight" min="0" step="0.01" inputmode="decimal" value="${c.weight ?? ''}">
+        </div>
+        <div class="field">
+          <label>จำนวนกล่อง <span class="req">*</span></label>
+          <input type="number" id="boxes" min="0" step="1" inputmode="numeric" value="${c.boxes ?? ''}">
+        </div>
+      </div>
+      <div class="field">
+        <label>ปริมาตร (ลบ.ม.)</label>
+        <input type="number" id="volume" min="0" step="0.001" inputmode="decimal" value="${c.volume ?? ''}">
+      </div>
+      <div class="field">
+        <label>เลือกขนส่ง <span class="req">*</span></label>
+        <div class="radio-group">
+          <label class="radio-card ${c.carrier === 'TPI' ? 'selected' : ''}" id="r-TPI" onclick="selectCarrier('TPI')">
+            <input type="radio" name="carrier" value="TPI" ${c.carrier === 'TPI' ? 'checked' : ''}> TPI
+          </label>
+          <label class="radio-card ${c.carrier === 'NEXT' ? 'selected' : ''}" id="r-NEXT" onclick="selectCarrier('NEXT')">
+            <input type="radio" name="carrier" value="NEXT" ${c.carrier === 'NEXT' ? 'checked' : ''}> NEXT
+          </label>
+        </div>
+        <div class="field-hint">เลือก NEXT จะมีค่าศุลกากร + VAT ในขั้นถัดไป</div>
+      </div>
+    </div>
+  `;
+  renderBottomBar(`
+    <button class="btn btn-secondary" onclick="back()">ยกเลิก</button>
+    <button class="btn btn-primary" onclick="saveStepC()">💾 บันทึก</button>
+  `);
+}
+function selectCarrier(c) {
+  document.getElementById('r-TPI').classList.toggle('selected', c === 'TPI');
+  document.getElementById('r-NEXT').classList.toggle('selected', c === 'NEXT');
+  document.querySelector(`input[name="carrier"][value="${c}"]`).checked = true;
+}
+function saveStepC() {
+  const weight = parseFloat(document.getElementById('weight').value);
+  const boxes = parseInt(document.getElementById('boxes').value, 10);
+  const volume = parseFloat(document.getElementById('volume').value);
+  const carrierEl = document.querySelector('input[name="carrier"]:checked');
+  if (!weight || weight <= 0) { toast('กรุณากรอกน้ำหนัก', 'error'); return; }
+  if (!boxes || boxes <= 0) { toast('กรุณากรอกจำนวนกล่อง', 'error'); return; }
+  if (!carrierEl) { toast('กรุณาเลือกขนส่ง', 'error'); return; }
+  if (!updateShipment(state.currentId, s => ({
+    ...s, stepC: {
+      weight, boxes, volume: isNaN(volume) ? null : volume,
+      carrier: carrierEl.value, completed: true
+    }
+  }))) return;
+  toast('บันทึกเรียบร้อย ✓', 'success');
+  state.view = 'owner-detail';
+  render();
+}
+
+/* ============ Step D ============ */
+function renderStepD() {
+  const s = getShipment(state.currentId);
+  if (!s) { back(); return; }
+  renderTopbar('Step D: ถึงไทย');
+  const d = s.stepD || {};
+  const isNext = s.stepC?.carrier === 'NEXT';
+  document.getElementById('main').innerHTML = `
+    <div class="form-section">
+      <h3><span class="step-badge">Step D</span> ของถึงไทย</h3>
+      <div class="field">
+        <label>วันที่ถึงไทย <span class="req">*</span></label>
+        <input type="date" id="arrivalDate" value="${d.arrivalDate || todayISO()}">
+      </div>
+      <div class="field">
+        <label>ค่าขนส่งจีน-ไทย (฿) <span class="req">*</span></label>
+        <input type="number" id="shippingCost" min="0" step="0.01" inputmode="decimal" value="${d.shippingCost ?? ''}">
+      </div>
+      ${isNext ? `
+        <div class="field">
+          <label>ค่าศุลกากร (฿) <span class="req">*</span></label>
+          <input type="number" id="customs" min="0" step="0.01" inputmode="decimal" value="${d.customs ?? ''}">
+        </div>
+        <div class="field">
+          <label>ภาษีมูลค่าเพิ่ม VAT (฿) <span class="req">*</span></label>
+          <input type="number" id="vat" min="0" step="0.01" inputmode="decimal" value="${d.vat ?? ''}">
+        </div>
+      ` : `
+        <div class="field">
+          <label>ค่าส่ง TPI → นิ่มซี่เส็ง (฿) <span class="req">*</span></label>
+          <input type="number" id="tpiToNim" min="0" step="0.01" inputmode="decimal" value="${d.tpiToNim ?? 100}">
+          <div class="field-hint">ค่าเริ่มต้น 100 ฿ แก้ไขได้หากไม่ใช่ 100</div>
+        </div>
+        <div class="field-hint" style="padding:10px;background:var(--primary-50);border-radius:8px;color:var(--primary)">ℹ️ ขนส่ง TPI ไม่ต้องบันทึกค่าศุลกากร/VAT</div>
+      `}
+    </div>
+  `;
+  renderBottomBar(`
+    <button class="btn btn-secondary" onclick="back()">ยกเลิก</button>
+    <button class="btn btn-primary" onclick="saveStepD()">💾 บันทึก</button>
+  `);
+}
+function saveStepD() {
+  const s = getShipment(state.currentId);
+  const isNext = s.stepC?.carrier === 'NEXT';
+  const arrivalDate = document.getElementById('arrivalDate').value;
+  const shippingCost = parseFloat(document.getElementById('shippingCost').value);
+  if (!arrivalDate) { toast('กรุณาเลือกวันถึงไทย', 'error'); return; }
+  if (isNaN(shippingCost) || shippingCost < 0) { toast('กรุณากรอกค่าขนส่ง', 'error'); return; }
+  let customs = 0, vat = 0, tpiToNim = 0;
+  if (isNext) {
+    customs = parseFloat(document.getElementById('customs').value);
+    vat = parseFloat(document.getElementById('vat').value);
+    if (isNaN(customs)) customs = 0;
+    if (isNaN(vat)) vat = 0;
+  } else {
+    tpiToNim = parseFloat(document.getElementById('tpiToNim').value);
+    if (isNaN(tpiToNim) || tpiToNim < 0) tpiToNim = 100;
+  }
+  if (!updateShipment(state.currentId, s => ({
+    ...s, stepD: { arrivalDate, shippingCost, customs, vat, tpiToNim, completed: true }
+  }))) return;
+  toast('บันทึกเรียบร้อย ✓', 'success');
+  state.view = 'owner-detail';
+  render();
+}
+
+/* ============ Staff Dashboard ============ */
+function renderStaffDashboard() {
+  renderTopbar('รายการรอรับของ', false);
+  const all = loadShipments()
+    .filter(s => {
+      const st = computeStatus(s);
+      return ['arrived','warehouse'].includes(st) && !s.confirmed;
+    })
+    .sort((a,b)=> b.id.localeCompare(a.id));
+
+  let listHtml;
+  if (all.length === 0) {
+    listHtml = `<div class="empty"><div class="icon">📭</div><p>ยังไม่มี Shipment ที่รอรับ</p></div>`;
+  } else {
+    listHtml = all.map(s => renderShipmentCard(s, 'staff-detail')).join('');
+  }
+  document.getElementById('main').innerHTML = `
+    <div class="summary-grid" style="grid-template-columns: repeat(2, 1fr)">
+      <div class="summary-card purple"><div class="label">รอรับของ</div><div class="value">${all.length}</div></div>
+      <div class="summary-card green"><div class="label">รับแล้ววันนี้</div><div class="value">${loadShipments().filter(s => s.confirmed && (s.confirmedAt||'').startsWith(todayISO())).length}</div></div>
+    </div>
+    <div class="section-header"><h2>Shipment ที่รอดำเนินการ</h2></div>
+    ${listHtml}
+  `;
+  renderBottomBar('');
+}
+
+/* ============ Staff Detail ============ */
+function renderStaffDetail() {
+  const s = getShipment(state.currentId);
+  if (!s) { back(); return; }
+  renderTopbar(s.id + ' - รับของ');
+  const status = computeStatus(s);
+  const info = STATUS_INFO[status];
+
+  const itemsHtml = (s.stepA?.items || []).map(it => {
+    const boxes = Number(it.boxes) || 0;
+    const perBox = Number(it.perBox) || 0;
+    const total = boxes * perBox || Number(it.quantity) || 0;
+    return `
+    <div class="data-row" style="flex-direction:column;align-items:stretch;gap:2px;padding:8px 0">
+      <div style="display:flex;justify-content:space-between;gap:8px">
+        <span style="font-weight:500">${escapeHtml(it.name || it.sku || '-')}</span>
+        <span class="v">${fmtNum(total)} ชิ้น</span>
+      </div>
+      ${boxes ? `<div style="font-size:12px;color:var(--text-muted)">${fmtNum(boxes)} ลัง × ${fmtNum(perBox)} ชิ้น/ลัง</div>` : ''}
+    </div>`;
+  }).join('');
+
+  document.getElementById('main').innerHTML = `
+    <div class="detail-header">
+      <div class="id-row">
+        <h2>${s.id}</h2>
+        <span class="badge" style="background:${info.bg};color:${info.color}">${info.label}</span>
+      </div>
+      <div class="info-grid">
+        <div class="info-item"><div class="label">วันถึงไทย</div><div class="value">${fmtDate(s.stepD?.arrivalDate)}</div></div>
+        <div class="info-item"><div class="label">ขนส่งโดย</div><div class="value">${s.stepC?.carrier || '-'}</div></div>
+        <div class="info-item"><div class="label">น้ำหนัก</div><div class="value">${fmtNum(s.stepC?.weight)} กก.</div></div>
+        <div class="info-item"><div class="label">จำนวนกล่อง</div><div class="value">${fmtNum(s.stepC?.boxes)}</div></div>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h3>📋 รายการสินค้า</h3>
+      ${itemsHtml}
+    </div>
+
+    ${s.stepB?.photos?.length ? `
+    <div class="form-section">
+      <h3>📸 รูปจากโรงงาน</h3>
+      ${renderPhotoGridStatic(s.stepB.photos)}
+    </div>` : ''}
+
+    ${renderStepCard('E', 'รับของเข้าคลัง', s.stepE?.completed, s.stepE ? `
+      <div class="data-row"><span>ค่า Nim Express</span><span class="v">${fmtBaht(s.stepE.nimExpressCost)} ฿</span></div>
+      ${s.stepE.photos?.length ? renderPhotoGridStatic(s.stepE.photos) : ''}
+    ` : '<div style="color:var(--text-muted)">ยังไม่ได้บันทึก</div>', 'staff-step-e', true)}
+
+    ${s.stepE?.completed && !s.confirmed ? `
+      <div style="margin-top:14px">
+        <button class="btn btn-success" style="width:100%;padding:16px;font-size:16px" onclick="confirmReceive('${s.id}')">
+          ✓ ยืนยันรับของเรียบร้อย
+        </button>
+      </div>
+    ` : ''}
+    ${s.confirmed ? `
+      <div class="form-section" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;text-align:center">
+        <div style="font-size:36px;margin-bottom:6px">✓</div>
+        <div style="font-size:16px;font-weight:600">รับของเรียบร้อยแล้ว</div>
+        <div style="font-size:13px;opacity:0.9;margin-top:4px">${fmtDate(s.confirmedAt)}</div>
+      </div>
+    ` : ''}
+  `;
+  renderBottomBar('');
+}
+
+/* ============ Step E (Staff) ============ */
+function renderStepE() {
+  const s = getShipment(state.currentId);
+  if (!s) { back(); return; }
+  renderTopbar('Step E: รับของเข้าคลัง');
+  const e = s.stepE || {};
+  document.getElementById('main').innerHTML = `
+    <div class="form-section">
+      <h3><span class="step-badge">Step E</span> รับของเข้าคลัง</h3>
+      <div class="field">
+        <label>ค่า Nim Express (฿) <span class="req">*</span></label>
+        <input type="number" id="nimCost" min="0" step="0.01" inputmode="decimal" value="${e.nimExpressCost ?? ''}" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label>ถ่ายรูปสินค้าที่รับ</label>
+        <div class="photo-grid" id="photo-grid"></div>
+        <label class="photo-add" style="display:inline-flex;margin-top:8px;width:96px">
+          <input type="file" accept="image/*" capture="environment" multiple onchange="addPhotos(this, 'E')">
+          📷
+        </label>
+        <div class="field-hint">ถ่ายรูปยืนยันการรับของ</div>
+      </div>
+    </div>
+  `;
+  renderBottomBar(`
+    <button class="btn btn-secondary" onclick="back()">ยกเลิก</button>
+    <button class="btn btn-primary" onclick="saveStepE()">💾 บันทึก</button>
+  `);
+  tempPhotos = [...(s.stepE?.photos || [])];
+  renderPhotoEditor('photo-grid');
+}
+function saveStepE() {
+  const nim = parseFloat(document.getElementById('nimCost').value);
+  if (isNaN(nim) || nim < 0) { toast('กรุณากรอกค่า Nim Express', 'error'); return; }
+  if (!updateShipment(state.currentId, s => ({
+    ...s, stepE: { nimExpressCost: nim, photos: tempPhotos, completed: true }
+  }))) return;
+  toast('บันทึกเรียบร้อย ✓', 'success');
+  state.view = state.mode === 'owner' ? 'owner-detail' : 'staff-detail';
+  render();
+}
+function confirmReceive(id) {
+  confirmModal('ยืนยันรับของ', `ยืนยันว่าได้รับ ${id} ครบถ้วนแล้ว?`, () => {
+    if (!updateShipment(id, s => ({ ...s, confirmed: true, confirmedAt: new Date().toISOString() }))) return;
+    toast('ยืนยันรับของเรียบร้อย ✓', 'success');
+    state.view = state.mode === 'owner' ? 'owner-detail' : 'staff-detail';
+    render();
+  }, 'ยืนยัน', 'btn-success');
+}
+
+/* ============ Init ============ */
+window.addEventListener('DOMContentLoaded', async () => {
+  setSyncStatus();
+  await bootstrapFromCloud();
+  render();
+});
+window.addEventListener('online',  () => { setSyncStatus('syncing'); drainQueue(); });
+window.addEventListener('offline', () => { setSyncStatus('offline'); });
+
+/* Expose handlers */
+window.selectMode = selectMode;
+window.newShipment = newShipment;
+window.openShipment = openShipment;
+window.setFilter = setFilter;
+window.back = back;
+window.switchMode = switchMode;
+window.gotoStep = gotoStep;
+window.addItemRow = addItemRow;
+window.removeItemRow = removeItemRow;
+window.saveNewShipment = saveNewShipment;
+window.saveStepA = saveStepA;
+window.saveStepB = saveStepB;
+window.saveStepC = saveStepC;
+window.saveStepD = saveStepD;
+window.saveStepE = saveStepE;
+window.addPhotos = addPhotos;
+window.removePhoto = removePhoto;
+window.selectCarrier = selectCarrier;
+window.confirmDelete = confirmDelete;
+window.confirmReceive = confirmReceive;
+window.comboClear = comboClear;
+window.comboSetValue = comboSetValue;
+window.selectAlloc = selectAlloc;
+</script>
+</body>
+</html>
