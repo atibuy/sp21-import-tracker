@@ -1066,7 +1066,7 @@ function renderShipmentCard(s, targetView) {
       ${s.stepA ? `
       <div class="meta">
         <span>📅 ${fmtDate(s.stepA.orderDate)}</span>
-        ${s.stepC?.carrier ? `<span>🚛 ${s.stepC.carrier}</span>` : ''}
+        ${s.stepC?.carrier ? `<span>🚛 ${s.stepC.carrier}${s.stepC.transportMode ? (s.stepC.transportMode === 'land' ? ' 🚛' : ' 🚢') : ''}</span>` : ''}
         ${s.stepC?.weight ? `<span>⚖️ ${fmtNum(s.stepC.weight)} กก.</span>` : ''}
         ${s.stepC?.boxes ? `<span>📦 ${s.stepC.boxes} กล่อง</span>` : ''}
       </div>
@@ -1074,7 +1074,7 @@ function renderShipmentCard(s, targetView) {
       ${costs ? `
       <div class="footer">
         <span class="total">รวมต้นทุน <strong>${fmtBaht(totalCost)} ฿</strong></span>
-        <span style="font-size:13px;color:var(--text-muted)">${items.length} กลุ่ม</span>
+        <span style="font-size:13px;color:var(--text-muted)">${new Set(items.map(it => it.factory || '-')).size} โรงงาน · ${items.length} กลุ่ม</span>
       </div>` : ''}
       ` : ''}
       <div class="progress-line"><div class="fill" style="width:${(info.step/6)*100}%"></div></div>
@@ -1090,14 +1090,13 @@ function openShipment(id, view) {
 /* ============ Views: Create new Shipment ============ */
 function renderOwnerNew() {
   renderTopbar('สร้าง Shipment ใหม่');
-  const newId = nextShipmentId();
   document.getElementById('main').innerHTML = `
     <div class="form-section">
       <h3><span class="step-badge">Step A</span> ข้อมูลคำสั่งซื้อ</h3>
       <div class="field">
-        <label>รหัส Shipment</label>
-        <input type="text" id="newId" value="${newId}" readonly style="background:var(--bg);font-weight:600;color:var(--primary)">
-        <div class="field-hint">รหัสจะถูกสร้างอัตโนมัติ</div>
+        <label>หมายเลขตู้ (Container No.) <span class="req">*</span></label>
+        <input type="text" id="newId" placeholder="เช่น YWC01.15A-TH" style="font-weight:600;color:var(--primary);text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
+        <div class="field-hint">ใช้เป็นรหัส Shipment หลัก (ห้ามซ้ำ)</div>
       </div>
       <div class="field-grid">
         <div class="field">
@@ -1170,6 +1169,11 @@ function addItemRow(prefill) {
       <button class="remove-btn" onclick="removeItemRow(${idx})">ลบ</button>
     </div>
     <div class="field">
+      <label>โรงงาน <span class="req">*</span></label>
+      <input type="text" class="item-factory" placeholder="ชื่อ/รหัสโรงงาน" list="factory-list">
+      <div class="field-hint">ตู้เดียวกันมีของจากหลายโรงงานได้</div>
+    </div>
+    <div class="field">
       <label>ชื่อกลุ่มสินค้า <span class="req">*</span></label>
       <div class="combo" data-combo>
         <input type="text" class="combo-input item-name" placeholder="พิมพ์ชื่อกลุ่ม หรือเลือกจาก SKU..." autocomplete="off">
@@ -1213,6 +1217,7 @@ function addItemRow(prefill) {
       div.querySelector('[data-combo]').classList.add('has-value');
     }
     if (prefill.sku) div.querySelector('.item-sku').value = prefill.sku;
+    if (prefill.factory) div.querySelector('.item-factory').value = prefill.factory;
     div.querySelector('.item-boxes').value = prefill.boxes ?? '';
     div.querySelector('.item-perbox').value = prefill.perBox ?? '';
     div.querySelector('.item-yuan').value = prefill.yuanAmount ?? '';
@@ -1320,6 +1325,7 @@ function collectItems() {
   const rows = [...document.getElementById('items-container').children];
   const items = [];
   for (const r of rows) {
+    const factory = r.querySelector('.item-factory').value.trim();
     const name = r.querySelector('.item-name').value.trim();
     const sku = r.querySelector('.item-sku').value.trim();
     const boxes = parseFloat(r.querySelector('.item-boxes').value);
@@ -1327,11 +1333,13 @@ function collectItems() {
     const yuan = parseFloat(r.querySelector('.item-yuan').value);
     const weight = parseFloat(r.querySelector('.item-weight').value);
     const volume = parseFloat(r.querySelector('.item-volume').value);
+    if (!factory) { toast('กรุณากรอกโรงงานทุกรายการ', 'error'); return null; }
     if (!name) { toast('กรุณากรอกชื่อกลุ่มสินค้าทุกรายการ', 'error'); return null; }
     if (!boxes || boxes <= 0) { toast('กรุณากรอกจำนวนลังให้ครบ', 'error'); return null; }
     if (!perBox || perBox <= 0) { toast('กรุณากรอกจำนวนชิ้น/ลังให้ครบ', 'error'); return null; }
     if (isNaN(yuan) || yuan < 0) { toast('กรุณากรอกราคารวม (หยวน)', 'error'); return null; }
     items.push({
+      factory,
       name, sku: sku || null,
       boxes, perBox,
       yuanAmount: yuan,
@@ -1342,10 +1350,12 @@ function collectItems() {
   return items;
 }
 function saveNewShipment() {
-  const id = document.getElementById('newId').value;
+  const id = document.getElementById('newId').value.trim().toUpperCase();
   const orderDate = document.getElementById('orderDate').value;
   const exchangeRate = parseFloat(document.getElementById('exchangeRate').value);
   const allocMethod = (document.querySelector('input[name="allocMethod"]:checked') || {}).value;
+  if (!id) { toast('กรุณากรอกหมายเลขตู้ (Container No.)', 'error'); return; }
+  if (!/^[A-Z0-9._\-]+$/i.test(id)) { toast('Container No. รองรับเฉพาะตัวอักษร/ตัวเลข/._-', 'error'); return; }
   if (!orderDate) { toast('กรุณาเลือกวันที่สั่งซื้อ', 'error'); return; }
   if (!exchangeRate || exchangeRate <= 0) { toast('กรุณากรอกอัตราแลกเปลี่ยน', 'error'); return; }
   if (!allocMethod) { toast('กรุณาเลือกวิธีแบ่งค่าขนส่ง', 'error'); return; }
@@ -1353,10 +1363,10 @@ function saveNewShipment() {
   if (!items) return;
 
   const all = loadShipments();
-  if (all.some(s => s.id === id)) { toast('รหัสซ้ำ ลองรีเฟรชอีกครั้ง', 'error'); return; }
+  if (all.some(s => s.id === id)) { toast('หมายเลขตู้นี้มีอยู่แล้ว', 'error'); return; }
   const now = new Date().toISOString();
   const ship = {
-    id, createdAt: now, updatedAt: now,
+    id, containerNo: id, createdAt: now, updatedAt: now,
     allocMethod,
     stepA: { orderDate, exchangeRate, items, completed: true },
     stepB: null, stepC: null, stepD: null, stepE: null,
@@ -1381,23 +1391,33 @@ function renderOwnerDetail() {
   const costs = calcCosts(s);
 
   const rate = Number(s.stepA?.exchangeRate) || 0;
-  const itemsHtml = (s.stepA?.items || []).map(it => {
-    const boxes = Number(it.boxes) || 0;
-    const perBox = Number(it.perBox) || 0;
-    const total = boxes * perBox || Number(it.quantity) || 0;
-    const yuan = Number(it.yuanAmount) || 0;
-    const baht = yuan * rate;
+  const itemsByFactory = {};
+  (s.stepA?.items || []).forEach(it => {
+    const k = it.factory || '(ไม่ระบุโรงงาน)';
+    (itemsByFactory[k] = itemsByFactory[k] || []).push(it);
+  });
+  const itemsHtml = Object.entries(itemsByFactory).map(([factory, list]) => {
+    const rows = list.map(it => {
+      const boxes = Number(it.boxes) || 0;
+      const perBox = Number(it.perBox) || 0;
+      const total = boxes * perBox || Number(it.quantity) || 0;
+      const yuan = Number(it.yuanAmount) || 0;
+      const baht = yuan * rate;
+      return `
+      <div class="data-row" style="flex-direction:column;align-items:stretch;gap:4px;padding:8px 0">
+        <div style="display:flex;justify-content:space-between;gap:8px">
+          <span style="font-weight:500">${escapeHtml(it.name || it.sku || '-')}</span>
+          <span class="v">¥${fmtBaht(yuan)}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--text-secondary)">
+          <span>${boxes ? `${fmtNum(boxes)} ลัง × ${fmtNum(perBox)} ชิ้น = ${fmtNum(total)} ชิ้น` : ''}${it.weight ? ` · ${fmtNum(it.weight)} กก.` : ''}${it.volume ? ` · ${fmtNum(it.volume)} คิว` : ''}</span>
+          <span>≈ ${fmtBaht(baht)} ฿</span>
+        </div>
+      </div>`;
+    }).join('');
     return `
-    <div class="data-row" style="flex-direction:column;align-items:stretch;gap:4px;padding:8px 0">
-      <div style="display:flex;justify-content:space-between;gap:8px">
-        <span style="font-weight:500">${escapeHtml(it.name || it.sku || '-')}</span>
-        <span class="v">¥${fmtBaht(yuan)}</span>
-      </div>
-      <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--text-secondary)">
-        <span>${boxes ? `${fmtNum(boxes)} ลัง × ${fmtNum(perBox)} ชิ้น = ${fmtNum(total)} ชิ้น` : ''}${it.weight ? ` · ${fmtNum(it.weight)} กก.` : ''}${it.volume ? ` · ${fmtNum(it.volume)} คิว` : ''}</span>
-        <span>≈ ${fmtBaht(baht)} ฿</span>
-      </div>
-    </div>`;
+      <div style="margin-top:8px;padding:6px 10px;background:var(--primary-50);border-radius:8px;font-size:12px;font-weight:600;color:var(--primary)">🏭 ${escapeHtml(factory)} · ${list.length} กลุ่ม</div>
+      ${rows}`;
   }).join('');
 
   document.getElementById('main').innerHTML = `
@@ -1444,8 +1464,8 @@ function renderOwnerDetail() {
     ${renderStepCard('C/F', 'น้ำหนัก / ขนส่ง', s.stepC?.completed, s.stepC ? `
       <div class="data-row"><span>น้ำหนัก</span><span class="v">${fmtNum(s.stepC.weight)} กก.</span></div>
       <div class="data-row"><span>จำนวนกล่อง</span><span class="v">${fmtNum(s.stepC.boxes)}</span></div>
-      <div class="data-row"><span>ปริมาตร</span><span class="v">${fmtNum(s.stepC.volume)} ลบ.ม.</span></div>
-      <div class="data-row"><span>ขนส่งโดย</span><span class="v">${s.stepC.carrier}</span></div>
+      <div class="data-row"><span>ปริมาตร</span><span class="v">${fmtNum(s.stepC.volume)} คิว</span></div>
+      <div class="data-row"><span>ขนส่งโดย</span><span class="v">${s.stepC.carrier}${s.stepC.transportMode ? ` · ${s.stepC.transportMode === 'land' ? '🚛 ทางรถ' : '🚢 ทางเรือ'}` : ''}</span></div>
     ` : '<div style="color:var(--text-muted)">ยังไม่ได้บันทึก</div>', 'owner-step-c', status === 'shipped')}
 
     ${renderStepCard('D', 'ถึงไทย / ค่าใช้จ่าย', s.stepD?.completed, s.stepD ? `
@@ -1455,11 +1475,16 @@ function renderOwnerDetail() {
         <div class="data-row"><span>ค่าศุลกากร</span><span class="v">${fmtBaht(s.stepD.customs)} ฿</span></div>
         <div class="data-row"><span>ภาษีมูลค่าเพิ่ม</span><span class="v">${fmtBaht(s.stepD.vat)} ฿</span></div>
       ` : `
+        <div class="data-row"><span>ตู้ที่มาพร้อมกัน</span><span class="v">${fmtNum(s.stepD.arrivalGroupSize ?? 1)} ตู้</span></div>
         <div class="data-row"><span>ค่าส่ง TPI → นิ่มซี่เส็ง</span><span class="v">${fmtBaht(s.stepD.tpiToNim ?? 100)} ฿</span></div>
       `}
     ` : '<div style="color:var(--text-muted)">ยังไม่ได้บันทึก</div>', 'owner-step-d', status === 'transit')}
 
     ${renderStepCard('E', 'รับของเข้าคลัง', s.stepE?.completed, s.stepE ? `
+      ${s.stepE.smallBoxes || s.stepE.largeBoxes ? `
+        <div class="data-row"><span>กล่องเล็ก</span><span class="v">${fmtNum(s.stepE.smallBoxes || 0)} × ${fmtBaht(s.stepE.smallRate ?? 63)} ฿</span></div>
+        <div class="data-row"><span>กล่องใหญ่</span><span class="v">${fmtNum(s.stepE.largeBoxes || 0)} × ${fmtBaht(s.stepE.largeRate ?? 100)} ฿</span></div>
+      ` : ''}
       <div class="data-row"><span>ค่า Nim Express</span><span class="v">${fmtBaht(s.stepE.nimExpressCost)} ฿</span></div>
       ${s.stepE.photos?.length ? renderPhotoGridStatic(s.stepE.photos) : ''}
       ${s.confirmed ? `<div class="data-row" style="color:var(--success)"><span>✓ ยืนยันรับของแล้ว</span><span class="v">${fmtDate(s.confirmedAt)}</span></div>` : ''}
@@ -1714,6 +1739,22 @@ function renderStepC() {
         </div>
         <div class="field-hint">เลือก NEXT จะมีค่าศุลกากร + VAT ในขั้นถัดไป</div>
       </div>
+      <div class="field" id="tpi-mode-field" style="display:${c.carrier === 'TPI' ? 'block' : 'none'}">
+        <label>ประเภทการขนส่ง TPI <span class="req">*</span></label>
+        <div class="radio-group">
+          <label class="radio-card ${c.transportMode === 'land' ? 'selected' : ''}" id="r-land" onclick="selectTransportMode('land')">
+            <input type="radio" name="transportMode" value="land" ${c.transportMode === 'land' ? 'checked' : ''}>
+            🚛 ทางรถ
+            <div style="font-size:11px;color:var(--text-muted);font-weight:400;margin-top:2px">8,000 ฿/คิว</div>
+          </label>
+          <label class="radio-card ${c.transportMode === 'sea' ? 'selected' : ''}" id="r-sea" onclick="selectTransportMode('sea')">
+            <input type="radio" name="transportMode" value="sea" ${c.transportMode === 'sea' ? 'checked' : ''}>
+            🚢 ทางเรือ
+            <div style="font-size:11px;color:var(--text-muted);font-weight:400;margin-top:2px">6,000 ฿/คิว</div>
+          </label>
+        </div>
+        <div class="field-hint">ค่าขนส่งคำนวณ = ปริมาตร × อัตรา (ขั้นต่ำ 500 ฿)</div>
+      </div>
     </div>
   `;
   renderBottomBar(`
@@ -1725,19 +1766,31 @@ function selectCarrier(c) {
   document.getElementById('r-TPI').classList.toggle('selected', c === 'TPI');
   document.getElementById('r-NEXT').classList.toggle('selected', c === 'NEXT');
   document.querySelector(`input[name="carrier"][value="${c}"]`).checked = true;
+  const tpiField = document.getElementById('tpi-mode-field');
+  if (tpiField) tpiField.style.display = c === 'TPI' ? 'block' : 'none';
+}
+function selectTransportMode(m) {
+  document.getElementById('r-land').classList.toggle('selected', m === 'land');
+  document.getElementById('r-sea').classList.toggle('selected', m === 'sea');
+  const r = document.querySelector(`input[name="transportMode"][value="${m}"]`);
+  if (r) r.checked = true;
 }
 function saveStepC() {
   const weight = parseFloat(document.getElementById('weight').value);
   const boxes = parseInt(document.getElementById('boxes').value, 10);
   const volume = parseFloat(document.getElementById('volume').value);
   const carrierEl = document.querySelector('input[name="carrier"]:checked');
+  const transportEl = document.querySelector('input[name="transportMode"]:checked');
   if (!weight || weight <= 0) { toast('กรุณากรอกน้ำหนัก', 'error'); return; }
   if (!boxes || boxes <= 0) { toast('กรุณากรอกจำนวนกล่อง', 'error'); return; }
   if (!carrierEl) { toast('กรุณาเลือกขนส่ง', 'error'); return; }
+  if (carrierEl.value === 'TPI' && !transportEl) { toast('กรุณาเลือกทางรถหรือทางเรือ', 'error'); return; }
   if (!updateShipment(state.currentId, s => ({
     ...s, stepC: {
       weight, boxes, volume: isNaN(volume) ? null : volume,
-      carrier: carrierEl.value, completed: true
+      carrier: carrierEl.value,
+      transportMode: carrierEl.value === 'TPI' ? transportEl.value : null,
+      completed: true
     }
   }))) return;
   toast('บันทึกเรียบร้อย ✓', 'success');
@@ -1746,12 +1799,29 @@ function saveStepC() {
 }
 
 /* ============ Step D ============ */
+const TPI_RATE = { land: 8000, sea: 6000 };
+const TPI_MIN = 500;
+const TPI_TO_NIM_BASE = 100;
+
+function calcTpiShipping(volume, mode) {
+  const v = Number(volume) || 0;
+  const rate = TPI_RATE[mode] || 0;
+  if (!v || !rate) return 0;
+  return Math.max(TPI_MIN, v * rate);
+}
+
 function renderStepD() {
   const s = getShipment(state.currentId);
   if (!s) { back(); return; }
   renderTopbar('Step D: ถึงไทย');
   const d = s.stepD || {};
   const isNext = s.stepC?.carrier === 'NEXT';
+  const volume = Number(s.stepC?.volume) || 0;
+  const mode = s.stepC?.transportMode;
+  const autoTpiCost = !isNext ? calcTpiShipping(volume, mode) : 0;
+  const initialShipping = d.shippingCost ?? (!isNext ? autoTpiCost : '');
+  const groupSize = d.arrivalGroupSize ?? 1;
+  const initialTpiToNim = d.tpiToNim ?? +(TPI_TO_NIM_BASE / groupSize).toFixed(2);
   document.getElementById('main').innerHTML = `
     <div class="form-section">
       <h3><span class="step-badge">Step D</span> ของถึงไทย</h3>
@@ -1759,9 +1829,21 @@ function renderStepD() {
         <label>วันที่ถึงไทย <span class="req">*</span></label>
         <input type="date" id="arrivalDate" value="${d.arrivalDate || todayISO()}">
       </div>
+      ${!isNext && mode ? `
+        <div class="field-hint" style="padding:10px;background:var(--primary-50);border-radius:8px;color:var(--primary);margin-bottom:10px">
+          📐 ปริมาตร <b>${fmtNum(volume)} คิว</b> × ${fmtNum(TPI_RATE[mode])} ฿/คิว (${mode === 'land' ? 'ทางรถ' : 'ทางเรือ'}) = <b>${fmtBaht(volume * TPI_RATE[mode])} ฿</b><br>
+          ขั้นต่ำ ${TPI_MIN} ฿ → ค่าขนส่งสุทธิ <b>${fmtBaht(autoTpiCost)} ฿</b>
+        </div>
+      ` : ''}
+      ${!isNext && !mode ? `
+        <div class="field-hint" style="padding:10px;background:#fef3c7;border-radius:8px;color:#92400e;margin-bottom:10px">
+          ⚠️ ยังไม่ได้เลือก ทางรถ/ทางเรือ ใน Step C — กรอกค่าขนส่งด้วยตนเอง
+        </div>
+      ` : ''}
       <div class="field">
         <label>ค่าขนส่งจีน-ไทย (฿) <span class="req">*</span></label>
-        <input type="number" id="shippingCost" min="0" step="0.01" inputmode="decimal" value="${d.shippingCost ?? ''}">
+        <input type="number" id="shippingCost" min="0" step="0.01" inputmode="decimal" value="${initialShipping}">
+        ${!isNext && mode ? `<div class="field-hint">ค่าเริ่มต้นคำนวณอัตโนมัติ — แก้ไขได้หากต่างจริง</div>` : ''}
       </div>
       ${isNext ? `
         <div class="field">
@@ -1774,9 +1856,14 @@ function renderStepD() {
         </div>
       ` : `
         <div class="field">
+          <label>จำนวนตู้ที่มาพร้อมกัน (รวมตู้นี้) <span class="req">*</span></label>
+          <input type="number" id="arrivalGroupSize" min="1" step="1" inputmode="numeric" value="${groupSize}" oninput="recalcTpiToNim()">
+          <div class="field-hint">ค่าส่งจาก TPI → นิ่มซี่เส็ง ${TPI_TO_NIM_BASE} ฿ ต่อครั้ง หารตามจำนวนตู้</div>
+        </div>
+        <div class="field">
           <label>ค่าส่ง TPI → นิ่มซี่เส็ง (฿) <span class="req">*</span></label>
-          <input type="number" id="tpiToNim" min="0" step="0.01" inputmode="decimal" value="${d.tpiToNim ?? 100}">
-          <div class="field-hint">ค่าเริ่มต้น 100 ฿ แก้ไขได้หากไม่ใช่ 100</div>
+          <input type="number" id="tpiToNim" min="0" step="0.01" inputmode="decimal" value="${initialTpiToNim}">
+          <div class="field-hint" id="tpi-nim-hint">${TPI_TO_NIM_BASE} ÷ ${groupSize} = ${fmtBaht(TPI_TO_NIM_BASE / groupSize)} ฿ (แก้ไขได้)</div>
         </div>
         <div class="field-hint" style="padding:10px;background:var(--primary-50);border-radius:8px;color:var(--primary)">ℹ️ ขนส่ง TPI ไม่ต้องบันทึกค่าศุลกากร/VAT</div>
       `}
@@ -1787,6 +1874,13 @@ function renderStepD() {
     <button class="btn btn-primary" onclick="saveStepD()">💾 บันทึก</button>
   `);
 }
+function recalcTpiToNim() {
+  const size = Math.max(1, parseInt(document.getElementById('arrivalGroupSize').value, 10) || 1);
+  const v = +(TPI_TO_NIM_BASE / size).toFixed(2);
+  document.getElementById('tpiToNim').value = v;
+  const hint = document.getElementById('tpi-nim-hint');
+  if (hint) hint.textContent = `${TPI_TO_NIM_BASE} ÷ ${size} = ${fmtBaht(v)} ฿ (แก้ไขได้)`;
+}
 function saveStepD() {
   const s = getShipment(state.currentId);
   const isNext = s.stepC?.carrier === 'NEXT';
@@ -1794,18 +1888,20 @@ function saveStepD() {
   const shippingCost = parseFloat(document.getElementById('shippingCost').value);
   if (!arrivalDate) { toast('กรุณาเลือกวันถึงไทย', 'error'); return; }
   if (isNaN(shippingCost) || shippingCost < 0) { toast('กรุณากรอกค่าขนส่ง', 'error'); return; }
-  let customs = 0, vat = 0, tpiToNim = 0;
+  let customs = 0, vat = 0, tpiToNim = 0, arrivalGroupSize = 1;
   if (isNext) {
     customs = parseFloat(document.getElementById('customs').value);
     vat = parseFloat(document.getElementById('vat').value);
     if (isNaN(customs)) customs = 0;
     if (isNaN(vat)) vat = 0;
   } else {
+    arrivalGroupSize = parseInt(document.getElementById('arrivalGroupSize').value, 10);
+    if (!arrivalGroupSize || arrivalGroupSize < 1) { toast('จำนวนตู้ต้องอย่างน้อย 1', 'error'); return; }
     tpiToNim = parseFloat(document.getElementById('tpiToNim').value);
-    if (isNaN(tpiToNim) || tpiToNim < 0) tpiToNim = 100;
+    if (isNaN(tpiToNim) || tpiToNim < 0) tpiToNim = TPI_TO_NIM_BASE / arrivalGroupSize;
   }
   if (!updateShipment(state.currentId, s => ({
-    ...s, stepD: { arrivalDate, shippingCost, customs, vat, tpiToNim, completed: true }
+    ...s, stepD: { arrivalDate, shippingCost, customs, vat, tpiToNim, arrivalGroupSize, completed: true }
   }))) return;
   toast('บันทึกเรียบร้อย ✓', 'success');
   state.view = 'owner-detail';
@@ -1847,18 +1943,28 @@ function renderStaffDetail() {
   const status = computeStatus(s);
   const info = STATUS_INFO[status];
 
-  const itemsHtml = (s.stepA?.items || []).map(it => {
-    const boxes = Number(it.boxes) || 0;
-    const perBox = Number(it.perBox) || 0;
-    const total = boxes * perBox || Number(it.quantity) || 0;
+  const staffByFactory = {};
+  (s.stepA?.items || []).forEach(it => {
+    const k = it.factory || '(ไม่ระบุโรงงาน)';
+    (staffByFactory[k] = staffByFactory[k] || []).push(it);
+  });
+  const itemsHtml = Object.entries(staffByFactory).map(([factory, list]) => {
+    const rows = list.map(it => {
+      const boxes = Number(it.boxes) || 0;
+      const perBox = Number(it.perBox) || 0;
+      const total = boxes * perBox || Number(it.quantity) || 0;
+      return `
+      <div class="data-row" style="flex-direction:column;align-items:stretch;gap:2px;padding:8px 0">
+        <div style="display:flex;justify-content:space-between;gap:8px">
+          <span style="font-weight:500">${escapeHtml(it.name || it.sku || '-')}</span>
+          <span class="v">${fmtNum(total)} ชิ้น</span>
+        </div>
+        ${boxes ? `<div style="font-size:12px;color:var(--text-muted)">${fmtNum(boxes)} ลัง × ${fmtNum(perBox)} ชิ้น/ลัง</div>` : ''}
+      </div>`;
+    }).join('');
     return `
-    <div class="data-row" style="flex-direction:column;align-items:stretch;gap:2px;padding:8px 0">
-      <div style="display:flex;justify-content:space-between;gap:8px">
-        <span style="font-weight:500">${escapeHtml(it.name || it.sku || '-')}</span>
-        <span class="v">${fmtNum(total)} ชิ้น</span>
-      </div>
-      ${boxes ? `<div style="font-size:12px;color:var(--text-muted)">${fmtNum(boxes)} ลัง × ${fmtNum(perBox)} ชิ้น/ลัง</div>` : ''}
-    </div>`;
+      <div style="margin-top:8px;padding:6px 10px;background:var(--primary-50);border-radius:8px;font-size:12px;font-weight:600;color:var(--primary)">🏭 ${escapeHtml(factory)}</div>
+      ${rows}`;
   }).join('');
 
   document.getElementById('main').innerHTML = `
@@ -1910,17 +2016,49 @@ function renderStaffDetail() {
 }
 
 /* ============ Step E (Staff) ============ */
+const NIM_SMALL_RATE = 63;
+const NIM_LARGE_RATE = 100;
+
 function renderStepE() {
   const s = getShipment(state.currentId);
   if (!s) { back(); return; }
   renderTopbar('Step E: รับของเข้าคลัง');
   const e = s.stepE || {};
+  const smallBoxes = e.smallBoxes ?? '';
+  const largeBoxes = e.largeBoxes ?? '';
+  const smallRate = e.smallRate ?? NIM_SMALL_RATE;
+  const largeRate = e.largeRate ?? NIM_LARGE_RATE;
+  const calcInitial = (Number(smallBoxes) || 0) * smallRate + (Number(largeBoxes) || 0) * largeRate;
+  const initialCost = e.nimExpressCost != null
+    ? e.nimExpressCost
+    : (calcInitial || '');
   document.getElementById('main').innerHTML = `
     <div class="form-section">
       <h3><span class="step-badge">Step E</span> รับของเข้าคลัง</h3>
+      <div class="field-grid">
+        <div class="field">
+          <label>กล่องเล็ก (จำนวน)</label>
+          <input type="number" id="smallBoxes" min="0" step="1" inputmode="numeric" value="${smallBoxes}" placeholder="0" oninput="recalcNim()">
+        </div>
+        <div class="field">
+          <label>กล่องใหญ่ (จำนวน)</label>
+          <input type="number" id="largeBoxes" min="0" step="1" inputmode="numeric" value="${largeBoxes}" placeholder="0" oninput="recalcNim()">
+        </div>
+      </div>
+      <div class="field-grid">
+        <div class="field">
+          <label>อัตรา/กล่องเล็ก (฿)</label>
+          <input type="number" id="smallRate" min="0" step="0.01" inputmode="decimal" value="${smallRate}" oninput="recalcNim()">
+        </div>
+        <div class="field">
+          <label>อัตรา/กล่องใหญ่ (฿)</label>
+          <input type="number" id="largeRate" min="0" step="0.01" inputmode="decimal" value="${largeRate}" oninput="recalcNim()">
+        </div>
+      </div>
       <div class="field">
-        <label>ค่า Nim Express (฿) <span class="req">*</span></label>
-        <input type="number" id="nimCost" min="0" step="0.01" inputmode="decimal" value="${e.nimExpressCost ?? ''}" placeholder="0.00">
+        <label>ค่า Nim Express รวม (฿) <span class="req">*</span></label>
+        <input type="number" id="nimCost" min="0" step="0.01" inputmode="decimal" value="${initialCost}" placeholder="0.00">
+        <div class="field-hint" id="nim-hint">คำนวณอัตโนมัติจากจำนวนกล่อง — แก้ไขได้</div>
       </div>
       <div class="field">
         <label>ถ่ายรูปสินค้าที่รับ</label>
@@ -1940,11 +2078,31 @@ function renderStepE() {
   tempPhotos = [...(s.stepE?.photos || [])];
   renderPhotoEditor('photo-grid');
 }
+function recalcNim() {
+  const sb = parseFloat(document.getElementById('smallBoxes').value) || 0;
+  const lb = parseFloat(document.getElementById('largeBoxes').value) || 0;
+  const sr = parseFloat(document.getElementById('smallRate').value) || 0;
+  const lr = parseFloat(document.getElementById('largeRate').value) || 0;
+  const total = sb * sr + lb * lr;
+  document.getElementById('nimCost').value = +total.toFixed(2);
+  const hint = document.getElementById('nim-hint');
+  if (hint) hint.textContent = `${fmtNum(sb)} × ${fmtBaht(sr)} + ${fmtNum(lb)} × ${fmtBaht(lr)} = ${fmtBaht(total)} ฿ (แก้ไขได้)`;
+}
 function saveStepE() {
+  const smallBoxes = parseInt(document.getElementById('smallBoxes').value, 10) || 0;
+  const largeBoxes = parseInt(document.getElementById('largeBoxes').value, 10) || 0;
+  const smallRate = parseFloat(document.getElementById('smallRate').value);
+  const largeRate = parseFloat(document.getElementById('largeRate').value);
   const nim = parseFloat(document.getElementById('nimCost').value);
   if (isNaN(nim) || nim < 0) { toast('กรุณากรอกค่า Nim Express', 'error'); return; }
   if (!updateShipment(state.currentId, s => ({
-    ...s, stepE: { nimExpressCost: nim, photos: tempPhotos, completed: true }
+    ...s, stepE: {
+      smallBoxes, largeBoxes,
+      smallRate: isNaN(smallRate) ? NIM_SMALL_RATE : smallRate,
+      largeRate: isNaN(largeRate) ? NIM_LARGE_RATE : largeRate,
+      nimExpressCost: nim,
+      photos: tempPhotos, completed: true
+    }
   }))) return;
   toast('บันทึกเรียบร้อย ✓', 'success');
   state.view = state.mode === 'owner' ? 'owner-detail' : 'staff-detail';
@@ -1987,6 +2145,9 @@ window.saveStepE = saveStepE;
 window.addPhotos = addPhotos;
 window.removePhoto = removePhoto;
 window.selectCarrier = selectCarrier;
+window.selectTransportMode = selectTransportMode;
+window.recalcTpiToNim = recalcTpiToNim;
+window.recalcNim = recalcNim;
 window.confirmDelete = confirmDelete;
 window.confirmReceive = confirmReceive;
 window.comboClear = comboClear;

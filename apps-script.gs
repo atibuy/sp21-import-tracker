@@ -36,6 +36,9 @@ const SHEET_SHIPMENTS = 'Shipments';
 const SHEET_ITEMS = 'Items';
 const SHEET_COSTS = 'Costs';
 
+// IMPORTANT: append-only — เพิ่ม column ใหม่ได้ที่ "ท้าย array" เท่านั้น
+// เพื่อให้ index ตรงกับ sheet ที่มีอยู่ (data เก่าจะอยู่ตำแหน่งเดิม)
+// raw_json ปล่อยให้อยู่ตรงนั้น  ไม่ใช่ตัวสุดท้ายแล้วก็ยังใช้ได้ (อ้างถึงด้วยชื่อ)
 const SHIPMENT_COLS = [
   'id', 'createdAt', 'updatedAt', 'allocMethod',
   'confirmed', 'confirmedAt',
@@ -45,12 +48,20 @@ const SHIPMENT_COLS = [
   'stepD_completed', 'stepD_arrivalDate', 'stepD_shippingCost',
   'stepD_customs', 'stepD_vat', 'stepD_tpiToNim',
   'stepE_completed', 'stepE_nimExpressCost', 'stepE_photoCount',
-  'raw_json'
+  'raw_json',
+  // ===== fields ใหม่ — ห้ามแทรกกลาง  ต่อท้ายเท่านั้น =====
+  'containerNo',
+  'stepC_transportMode',
+  'stepD_arrivalGroupSize',
+  'stepE_smallBoxes', 'stepE_largeBoxes',
+  'stepE_smallRate', 'stepE_largeRate'
 ];
 
 const ITEM_COLS = [
   'shipmentId', 'idx', 'name', 'sku',
-  'boxes', 'perBox', 'yuanAmount', 'weight', 'volume'
+  'boxes', 'perBox', 'yuanAmount', 'weight', 'volume',
+  // ===== fields ใหม่ — ต่อท้ายเท่านั้น =====
+  'factory'
 ];
 
 const COST_COLS = [
@@ -109,6 +120,14 @@ function getOrCreateSheet(name, headers) {
   if (sheet.getLastRow() === 0) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     sheet.setFrozenRows(1);
+  } else {
+    // auto-migrate: เติม header ที่ขาดต่อท้าย (เรียงตาม headers[])
+    const lastCol = Math.max(1, sheet.getLastColumn());
+    const current = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (v) { return String(v); });
+    const missing = headers.filter(function (h) { return current.indexOf(h) === -1; });
+    if (missing.length > 0) {
+      sheet.getRange(1, lastCol + 1, 1, missing.length).setValues([missing]);
+    }
   }
   return sheet;
 }
@@ -144,6 +163,7 @@ function rowToShipment(row) {
   const toIso = v => v instanceof Date ? v.toISOString() : (v || null);
   const s = {
     id: get('id'),
+    containerNo: get('containerNo') || get('id') || null,
     createdAt: toIso(get('createdAt')),
     updatedAt: toIso(get('updatedAt')),
     allocMethod: get('allocMethod') || null,
@@ -172,6 +192,7 @@ function rowToShipment(row) {
       volume: Number(get('stepC_volume')) || 0,
       weight: Number(get('stepC_weight')) || 0,
       carrier: get('stepC_carrier') || '',
+      transportMode: get('stepC_transportMode') || null,
       completed: true
     };
   }
@@ -182,12 +203,17 @@ function rowToShipment(row) {
       customs: Number(get('stepD_customs')) || 0,
       vat: Number(get('stepD_vat')) || 0,
       tpiToNim: Number(get('stepD_tpiToNim')) || 0,
+      arrivalGroupSize: Number(get('stepD_arrivalGroupSize')) || 1,
       completed: true
     };
   }
   if (toBool(get('stepE_completed'))) {
     s.stepE = {
       nimExpressCost: Number(get('stepE_nimExpressCost')) || 0,
+      smallBoxes: Number(get('stepE_smallBoxes')) || 0,
+      largeBoxes: Number(get('stepE_largeBoxes')) || 0,
+      smallRate: Number(get('stepE_smallRate')) || 63,
+      largeRate: Number(get('stepE_largeRate')) || 100,
       photos: [],
       completed: true
     };
@@ -198,6 +224,7 @@ function rowToShipment(row) {
 function getItemsFor(shipmentId) {
   const sheet = getOrCreateSheet(SHEET_ITEMS, ITEM_COLS);
   if (sheet.getLastRow() < 2) return [];
+  const factoryIdx = ITEM_COLS.indexOf('factory');
   const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, ITEM_COLS.length).getValues();
   return rows
     .filter(r => String(r[0]) === String(shipmentId))
@@ -208,7 +235,8 @@ function getItemsFor(shipmentId) {
       perBox: Number(r[5]) || 0,
       yuanAmount: Number(r[6]) || 0,
       weight: Number(r[7]) || 0,
-      volume: Number(r[8]) || 0
+      volume: Number(r[8]) || 0,
+      factory: r[factoryIdx] || ''
     }));
 }
 
@@ -252,6 +280,7 @@ function shipmentToRow(s) {
     if (idx >= 0) row[idx] = val == null ? '' : val;
   };
   set('id', s.id);
+  set('containerNo', s.containerNo || s.id || '');
   set('createdAt', s.createdAt || '');
   set('updatedAt', s.updatedAt || '');
   set('allocMethod', s.allocMethod || '');
@@ -274,6 +303,7 @@ function shipmentToRow(s) {
     set('stepC_volume', Number(s.stepC.volume) || 0);
     set('stepC_weight', Number(s.stepC.weight) || 0);
     set('stepC_carrier', s.stepC.carrier || '');
+    set('stepC_transportMode', s.stepC.transportMode || '');
   }
   if (s.stepD) {
     set('stepD_completed', true);
@@ -282,11 +312,16 @@ function shipmentToRow(s) {
     set('stepD_customs', Number(s.stepD.customs) || 0);
     set('stepD_vat', Number(s.stepD.vat) || 0);
     set('stepD_tpiToNim', Number(s.stepD.tpiToNim) || 0);
+    set('stepD_arrivalGroupSize', Number(s.stepD.arrivalGroupSize) || 1);
   }
   if (s.stepE) {
     set('stepE_completed', true);
     set('stepE_nimExpressCost', Number(s.stepE.nimExpressCost) || 0);
     set('stepE_photoCount', (s.stepE.photos || []).length);
+    set('stepE_smallBoxes', Number(s.stepE.smallBoxes) || 0);
+    set('stepE_largeBoxes', Number(s.stepE.largeBoxes) || 0);
+    set('stepE_smallRate', Number(s.stepE.smallRate) || 0);
+    set('stepE_largeRate', Number(s.stepE.largeRate) || 0);
   }
 
   // raw_json — backup ของทุกฟิลด์  ตัด photos ออกเพื่อให้ไม่เกิน cell limit
@@ -312,13 +347,24 @@ function replaceItemsFor(shipmentId, items) {
     }
   }
   if (!items || items.length === 0) return;
-  const rows = items.map((it, i) => [
-    shipmentId, i,
-    it.name || '', it.sku || '',
-    Number(it.boxes) || 0, Number(it.perBox) || 0,
-    Number(it.yuanAmount) || 0,
-    Number(it.weight) || 0, Number(it.volume) || 0
-  ]);
+  const rows = items.map((it, i) => {
+    const row = new Array(ITEM_COLS.length).fill('');
+    const set = (name, val) => {
+      const idx = ITEM_COLS.indexOf(name);
+      if (idx >= 0) row[idx] = val == null ? '' : val;
+    };
+    set('shipmentId', shipmentId);
+    set('idx', i);
+    set('name', it.name || '');
+    set('sku', it.sku || '');
+    set('boxes', Number(it.boxes) || 0);
+    set('perBox', Number(it.perBox) || 0);
+    set('yuanAmount', Number(it.yuanAmount) || 0);
+    set('weight', Number(it.weight) || 0);
+    set('volume', Number(it.volume) || 0);
+    set('factory', it.factory || '');
+    return row;
+  });
   sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, ITEM_COLS.length).setValues(rows);
 }
 
