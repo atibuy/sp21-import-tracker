@@ -9,7 +9,8 @@
  *  2) ลบไฟล์ Code.gs ที่ขึ้นมา แล้ว paste ไฟล์นี้ทั้งหมดลงไป
  *  3) เมนู Run → เลือกฟังก์ชัน  initSheets  → กด Run
  *     (ครั้งแรกจะให้ Authorize เข้าถึง Google Sheets — กดอนุญาต)
- *     ระบบจะสร้าง header row บน sheet "Shipments", "Items", "Costs"
+ *     ระบบจะสร้าง header row บน sheet "Shipments", "Items", "Costs",
+ *     "Photos", "PhotoData"
  *  4) เมนู Deploy → New deployment
  *       Type: Web app
  *       Description: shipment-tracker
@@ -23,20 +24,23 @@
  *
  *  หมายเหตุ
  *  --------
- *  • รูปภาพ (base64) ถูกเก็บไว้ใน localStorage ของ browser เท่านั้น
- *    ไม่ส่งขึ้น Sheets เพราะ cell มี limit ~50,000 chars  รูปก้อนเดียวก็เกินได้
- *    บน sheet จะเก็บแค่ photoCount ไว้ดูว่ามีรูปกี่ใบ
+ *  • รูปภาพเก็บเป็น base64 ตรงๆ บน Google Sheets (ไม่ใช้ Drive แล้ว)
+ *    sheet "Photos" เก็บ metadata, sheet "PhotoData" เก็บก้อน base64
+ *    ที่ตัดเป็น chunk ทุก 40,000 chars (cell limit คือ 50,000)
  *  • ตาราง Costs เป็น snapshot ของต้นทุนล่าสุดที่คำนวณจาก client
  *    หากแก้ Step ใด ๆ ที่กระทบต้นทุน  row นี้จะถูกเขียนทับ
  */
 
 const SPREADSHEET_ID = '11yVFC71onKOKSsQbDiTbQDCvyY12s067ZMVmS7VFBlE';
-const DRIVE_ROOT_FOLDER = 'SP21';   // root folder ใน Google Drive
 
-const SHEET_SHIPMENTS = 'Shipments';
-const SHEET_ITEMS = 'Items';
-const SHEET_COSTS = 'Costs';
-const SHEET_PHOTOS = 'Photos';
+const SHEET_SHIPMENTS  = 'Shipments';
+const SHEET_ITEMS      = 'Items';
+const SHEET_COSTS      = 'Costs';
+const SHEET_PHOTOS     = 'Photos';
+const SHEET_PHOTO_DATA = 'PhotoData';
+
+// ขนาด chunk (chars ต่อ cell) — sheet cell limit คือ 50,000  เผื่อ safety 10K
+const PHOTO_CHUNK_SIZE = 40000;
 
 // IMPORTANT: append-only — เพิ่ม column ใหม่ได้ที่ "ท้าย array" เท่านั้น
 // เพื่อให้ index ตรงกับ sheet ที่มีอยู่ (data เก่าจะอยู่ตำแหน่งเดิม)
@@ -75,10 +79,18 @@ const COST_COLS = [
   'allocMethod', 'effectiveAlloc'
 ];
 
-// แต่ละ row = รูป 1 ใบ ที่ผูกกับ shipment+step+category
+// แต่ละ row = รูป 1 ใบ ที่ผูกกับ shipment+step+category (metadata เท่านั้น)
+// url/viewUrl/thumbUrl ปล่อยว่าง — base64 จริงอยู่ใน PhotoData
 const PHOTO_COLS = [
   'shipmentId', 'step', 'category', 'idx',
-  'fileId', 'url', 'viewUrl', 'thumbUrl', 'name', 'uploadedAt'
+  'fileId', 'url', 'viewUrl', 'thumbUrl', 'name', 'uploadedAt',
+  // ===== fields ใหม่ — ต่อท้ายเท่านั้น =====
+  'mimeType'
+];
+
+// แต่ละ row = chunk หนึ่งก้อนของ base64 — รูปใหญ่จะมีหลาย row ต่อ fileId
+const PHOTO_DATA_COLS = [
+  'fileId', 'chunkIdx', 'totalChunks', 'dataChunk'
 ];
 
 /* ================ Web app entry points ================ */
@@ -147,55 +159,58 @@ function initSheets() {
   getOrCreateSheet(SHEET_ITEMS, ITEM_COLS);
   getOrCreateSheet(SHEET_COSTS, COST_COLS);
   getOrCreateSheet(SHEET_PHOTOS, PHOTO_COLS);
-  return 'Sheets initialized: ' + [SHEET_SHIPMENTS, SHEET_ITEMS, SHEET_COSTS, SHEET_PHOTOS].join(', ');
+  getOrCreateSheet(SHEET_PHOTO_DATA, PHOTO_DATA_COLS);
+  return 'Sheets initialized: ' + [SHEET_SHIPMENTS, SHEET_ITEMS, SHEET_COSTS, SHEET_PHOTOS, SHEET_PHOTO_DATA].join(', ');
 }
 
-/* ================ Drive helpers ================ */
-function getOrCreateFolder(parent, name) {
-  const it = parent.getFoldersByName(name);
-  if (it.hasNext()) return it.next();
-  return parent.createFolder(name);
-}
-function getRootFolder() {
-  return getOrCreateFolder(DriveApp.getRootFolder(), DRIVE_ROOT_FOLDER);
-}
+/* ================ Photo storage (base64 in Sheets) ================ */
 
 function uploadPhoto(payload) {
   if (!payload || !payload.shipmentId) throw new Error('shipmentId required');
   if (!payload.dataUrl) throw new Error('dataUrl required');
-  const containerNo = String(payload.containerNo || payload.shipmentId);
-  const step = String(payload.step || 'misc');
-  const category = String(payload.category || 'general');
   const m = String(payload.dataUrl).match(/^data:([^;]+);base64,(.+)$/);
   if (!m) throw new Error('Invalid dataUrl');
   const mime = m[1];
-  const bytes = Utilities.base64Decode(m[2]);
-  const root = getRootFolder();
-  const containerFolder = getOrCreateFolder(root, containerNo);
-  const subFolder = getOrCreateFolder(containerFolder, step + '_' + category);
+  const b64 = m[2];
+  const fileId = Utilities.getUuid();
   const ext = (mime.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
   const safeName = (payload.filename ? String(payload.filename) : (Date.now() + '_' + Math.random().toString(36).slice(2, 8))) + '.' + ext;
-  const blob = Utilities.newBlob(bytes, mime, safeName);
-  const file = subFolder.createFile(blob);
-  try {
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  } catch (e) {
-    // workspace บางที่ไม่ให้แชร์ public — ปล่อยผ่าน รูปจะดูได้เฉพาะคนใน org
-  }
-  const fileId = file.getId();
+  const uploadedAt = new Date().toISOString();
+  writePhotoChunks(fileId, b64);
+  // client ใช้ url/viewUrl/thumbUrl ในการ render ทันที — ส่ง dataUrl กลับให้เลย
   return {
     fileId: fileId,
-    url:      'https://drive.google.com/uc?export=view&id=' + fileId,
-    viewUrl:  'https://drive.google.com/file/d/' + fileId + '/view',
-    thumbUrl: 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w400',
+    url:      payload.dataUrl,
+    viewUrl:  payload.dataUrl,
+    thumbUrl: payload.dataUrl,
     name: safeName,
-    uploadedAt: new Date().toISOString()
+    uploadedAt: uploadedAt,
+    mimeType: mime
   };
+}
+
+function writePhotoChunks(fileId, b64) {
+  const sheet = getOrCreateSheet(SHEET_PHOTO_DATA, PHOTO_DATA_COLS);
+  const total = Math.max(1, Math.ceil(b64.length / PHOTO_CHUNK_SIZE));
+  const rows = [];
+  for (let i = 0; i < total; i++) {
+    rows.push([fileId, i, total, b64.substring(i * PHOTO_CHUNK_SIZE, (i + 1) * PHOTO_CHUNK_SIZE)]);
+  }
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, PHOTO_DATA_COLS.length).setValues(rows);
+}
+
+function deletePhotoChunks(fileId) {
+  const sheet = ss().getSheetByName(SHEET_PHOTO_DATA);
+  if (!sheet || sheet.getLastRow() < 2) return;
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (String(rows[i][0]) === String(fileId)) sheet.deleteRow(i + 2);
+  }
 }
 
 function deletePhoto(payload) {
   if (!payload || !payload.fileId) throw new Error('fileId required');
-  try { DriveApp.getFileById(payload.fileId).setTrashed(true); } catch (e) {}
+  deletePhotoChunks(payload.fileId);
   return payload.fileId;
 }
 
@@ -206,15 +221,87 @@ function listShipments() {
   if (sheet.getLastRow() < 2) return [];
   const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, SHIPMENT_COLS.length).getValues();
   const rawIdx = SHIPMENT_COLS.indexOf('raw_json');
+  const idIdx = SHIPMENT_COLS.indexOf('id');
+  const photosBySid = loadAllPhotosByShipment();
   const out = [];
   for (const row of rows) {
+    const sid = String(row[idIdx] || '');
     const raw = row[rawIdx];
+    let s = null;
     if (raw) {
-      try { out.push(JSON.parse(raw)); continue; } catch (e) {}
+      try { s = JSON.parse(raw); } catch (e) { s = null; }
     }
-    out.push(rowToShipment(row));
+    if (!s) s = rowToShipment(row);
+    mergePhotosIntoShipment(s, photosBySid[sid] || {});
+    out.push(s);
   }
   return out;
+}
+
+function loadAllPhotosByShipment() {
+  const photoSheet = getOrCreateSheet(SHEET_PHOTOS, PHOTO_COLS);
+  const dataSheet  = getOrCreateSheet(SHEET_PHOTO_DATA, PHOTO_DATA_COLS);
+
+  // 1) อ่าน chunks ทั้งหมด แล้วเรียงตาม chunkIdx
+  const chunksByFileId = {};
+  if (dataSheet.getLastRow() >= 2) {
+    const rows = dataSheet.getRange(2, 1, dataSheet.getLastRow() - 1, PHOTO_DATA_COLS.length).getValues();
+    rows.forEach(function (r) {
+      const fid = String(r[0] || '');
+      if (!fid) return;
+      (chunksByFileId[fid] = chunksByFileId[fid] || []).push({ idx: Number(r[1]) || 0, data: String(r[3] || '') });
+    });
+    Object.keys(chunksByFileId).forEach(function (fid) {
+      chunksByFileId[fid].sort(function (a, b) { return a.idx - b.idx; });
+    });
+  }
+
+  // 2) อ่าน metadata + รวม chunks เป็น dataUrl
+  const out = {};
+  if (photoSheet.getLastRow() < 2) return out;
+  const rows = photoSheet.getRange(2, 1, photoSheet.getLastRow() - 1, PHOTO_COLS.length).getValues();
+  const ix = function (name) { return PHOTO_COLS.indexOf(name); };
+  rows
+    .slice()
+    .sort(function (a, b) { return (Number(a[ix('idx')]) || 0) - (Number(b[ix('idx')]) || 0); })
+    .forEach(function (r) {
+      const sid = String(r[ix('shipmentId')] || '');
+      const step = String(r[ix('step')] || '').toUpperCase();
+      if (!sid || !step) return;
+      const fileId = String(r[ix('fileId')] || '');
+      const mime = String(r[ix('mimeType')] || 'image/jpeg');
+      const chunks = chunksByFileId[fileId];
+      let dataUrl = '';
+      if (chunks && chunks.length) {
+        dataUrl = 'data:' + mime + ';base64,' + chunks.map(function (c) { return c.data; }).join('');
+      } else {
+        // legacy: รูปที่อัปด้วยเวอร์ชัน Drive — ใช้ url เดิมไปก่อน (อาจใช้งานไม่ได้)
+        dataUrl = String(r[ix('url')] || '');
+      }
+      const photo = {
+        category: r[ix('category')] || 'general',
+        fileId: fileId,
+        url:      dataUrl,
+        viewUrl:  dataUrl,
+        thumbUrl: dataUrl,
+        name: r[ix('name')] || '',
+        uploadedAt: r[ix('uploadedAt')] || '',
+        mimeType: mime
+      };
+      if (!out[sid]) out[sid] = {};
+      (out[sid][step] = out[sid][step] || []).push(photo);
+    });
+  return out;
+}
+
+function mergePhotosIntoShipment(s, photoByStep) {
+  ['A', 'B', 'C', 'D', 'E'].forEach(function (step) {
+    const list = photoByStep[step] || [];
+    if (list.length === 0) return;
+    const k = 'step' + step;
+    if (!s[k]) s[k] = { photos: list, completed: false };
+    else s[k].photos = list;
+  });
 }
 
 function rowToShipment(row) {
@@ -231,26 +318,21 @@ function rowToShipment(row) {
     confirmedAt: toIso(get('confirmedAt')),
     stepA: null, stepB: null, stepC: null, stepD: null, stepE: null
   };
-  const photosByStep = getPhotosFor(s.id);
   if (toBool(get('stepA_completed'))) {
     s.stepA = {
       orderDate: toIso(get('stepA_orderDate')),
       exchangeRate: Number(get('stepA_exchangeRate')) || 0,
       items: getItemsFor(s.id),
-      photos: photosByStep.A || [],
+      photos: [],
       completed: true
     };
-  } else if ((photosByStep.A || []).length) {
-    s.stepA = { photos: photosByStep.A, completed: false };
   }
   if (toBool(get('stepB_completed'))) {
     s.stepB = {
       shipDate: toIso(get('stepB_shipDate')),
-      photos: photosByStep.B || [],
+      photos: [],
       completed: true
     };
-  } else if ((photosByStep.B || []).length) {
-    s.stepB = { photos: photosByStep.B, completed: false };
   }
   if (toBool(get('stepC_completed'))) {
     s.stepC = {
@@ -259,11 +341,9 @@ function rowToShipment(row) {
       weight: Number(get('stepC_weight')) || 0,
       carrier: get('stepC_carrier') || '',
       transportMode: get('stepC_transportMode') || null,
-      photos: photosByStep.C || [],
+      photos: [],
       completed: true
     };
-  } else if ((photosByStep.C || []).length) {
-    s.stepC = { photos: photosByStep.C, completed: false };
   }
   if (toBool(get('stepD_completed'))) {
     s.stepD = {
@@ -273,11 +353,9 @@ function rowToShipment(row) {
       vat: Number(get('stepD_vat')) || 0,
       tpiToNim: Number(get('stepD_tpiToNim')) || 0,
       arrivalGroupSize: Number(get('stepD_arrivalGroupSize')) || 1,
-      photos: photosByStep.D || [],
+      photos: [],
       completed: true
     };
-  } else if ((photosByStep.D || []).length) {
-    s.stepD = { photos: photosByStep.D, completed: false };
   }
   if (toBool(get('stepE_completed'))) {
     s.stepE = {
@@ -286,11 +364,9 @@ function rowToShipment(row) {
       largeBoxes: Number(get('stepE_largeBoxes')) || 0,
       smallRate: Number(get('stepE_smallRate')) || 63,
       largeRate: Number(get('stepE_largeRate')) || 100,
-      photos: photosByStep.E || [],
+      photos: [],
       completed: true
     };
-  } else if ((photosByStep.E || []).length) {
-    s.stepE = { photos: photosByStep.E, completed: false };
   }
   return s;
 }
@@ -399,10 +475,12 @@ function shipmentToRow(s) {
     set('stepE_largeRate', Number(s.stepE.largeRate) || 0);
   }
 
-  // raw_json — backup ของทุกฟิลด์  ตัด photos ออกเพื่อให้ไม่เกิน cell limit
+  // raw_json — backup ของทุกฟิลด์  ตัด photos ทุก step ออก เพราะ base64 จะทำให้ cell บวมเกิน limit
   const lean = deepClone(s);
-  if (lean.stepB && lean.stepB.photos) lean.stepB.photos = [];
-  if (lean.stepE && lean.stepE.photos) lean.stepE.photos = [];
+  ['A', 'B', 'C', 'D', 'E'].forEach(function (st) {
+    const k = 'step' + st;
+    if (lean[k] && lean[k].photos) lean[k].photos = [];
+  });
   const rawStr = JSON.stringify(lean);
   // safety: ถ้ายังยาวเกิน 49,000 chars ก็ตัดทิ้ง  (ไม่น่าเกิดถ้าตัด photos แล้ว)
   set('raw_json', rawStr.length > 49000 ? '' : rawStr);
@@ -464,7 +542,7 @@ function replaceCostFor(shipmentId, c) {
   sheet.getRange(sheet.getLastRow() + 1, 1, 1, COST_COLS.length).setValues([row]);
 }
 
-/* ================ Photos sheet ================ */
+/* ================ Photos sheet (metadata) ================ */
 
 function collectShipmentPhotos(s) {
   const all = [];
@@ -473,16 +551,14 @@ function collectShipmentPhotos(s) {
     const photos = stepObj && stepObj.photos;
     if (!Array.isArray(photos)) return;
     photos.forEach(function (p) {
-      if (!p || !p.fileId) return;  // เก็บเฉพาะรูปที่อัปขึ้น Drive แล้ว
+      if (!p || !p.fileId) return;  // เก็บเฉพาะรูปที่อัปแล้ว (มี fileId)
       all.push({
         step: step,
         category: p.category || 'general',
         fileId: p.fileId,
-        url: p.url || '',
-        viewUrl: p.viewUrl || '',
-        thumbUrl: p.thumbUrl || '',
         name: p.name || '',
-        uploadedAt: p.uploadedAt || ''
+        uploadedAt: p.uploadedAt || '',
+        mimeType: p.mimeType || ''
       });
     });
   });
@@ -499,37 +575,25 @@ function replacePhotosFor(shipmentId, photos) {
   }
   if (!photos || photos.length === 0) return;
   const rows = photos.map(function (p, i) {
-    return [
-      shipmentId, p.step || '', p.category || '', i,
-      p.fileId || '', p.url || '', p.viewUrl || '', p.thumbUrl || '',
-      p.name || '', p.uploadedAt || ''
-    ];
+    const row = new Array(PHOTO_COLS.length).fill('');
+    const set = function (name, val) {
+      const idx = PHOTO_COLS.indexOf(name);
+      if (idx >= 0) row[idx] = val == null ? '' : val;
+    };
+    set('shipmentId', shipmentId);
+    set('step', p.step || '');
+    set('category', p.category || '');
+    set('idx', i);
+    set('fileId', p.fileId || '');
+    set('url', '');
+    set('viewUrl', '');
+    set('thumbUrl', '');
+    set('name', p.name || '');
+    set('uploadedAt', p.uploadedAt || '');
+    set('mimeType', p.mimeType || '');
+    return row;
   });
   sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, PHOTO_COLS.length).setValues(rows);
-}
-
-function getPhotosFor(shipmentId) {
-  const sheet = getOrCreateSheet(SHEET_PHOTOS, PHOTO_COLS);
-  if (sheet.getLastRow() < 2) return {};
-  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, PHOTO_COLS.length).getValues();
-  const byStep = { A: [], B: [], C: [], D: [], E: [] };
-  rows
-    .filter(function (r) { return String(r[0]) === String(shipmentId); })
-    .sort(function (a, b) { return (Number(a[3]) || 0) - (Number(b[3]) || 0); })
-    .forEach(function (r) {
-      const step = String(r[1] || '').toUpperCase();
-      if (!byStep[step]) return;
-      byStep[step].push({
-        category: r[2] || 'general',
-        fileId: r[4] || '',
-        url: r[5] || '',
-        viewUrl: r[6] || '',
-        thumbUrl: r[7] || '',
-        name: r[8] || '',
-        uploadedAt: r[9] || ''
-      });
-    });
-  return byStep;
 }
 
 /* ================ Delete ================ */
@@ -539,6 +603,18 @@ function deleteShipmentById(id) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
+    // 1) เก็บ fileId ของรูปทุกใบใน shipment ก่อนลบ metadata
+    const photoSheet = ss().getSheetByName(SHEET_PHOTOS);
+    const fileIdsToDelete = [];
+    if (photoSheet && photoSheet.getLastRow() >= 2) {
+      const rows = photoSheet.getRange(2, 1, photoSheet.getLastRow() - 1, PHOTO_COLS.length).getValues();
+      const sidIdx = PHOTO_COLS.indexOf('shipmentId');
+      const fidIdx = PHOTO_COLS.indexOf('fileId');
+      rows.forEach(function (r) {
+        if (String(r[sidIdx]) === String(id) && r[fidIdx]) fileIdsToDelete.push(String(r[fidIdx]));
+      });
+    }
+    // 2) ลบ row ใน Shipments / Items / Costs / Photos
     [SHEET_SHIPMENTS, SHEET_ITEMS, SHEET_COSTS, SHEET_PHOTOS].forEach(name => {
       const sheet = ss().getSheetByName(name);
       if (!sheet || sheet.getLastRow() < 2) return;
@@ -547,6 +623,18 @@ function deleteShipmentById(id) {
         if (String(ids[i][0]) === String(id)) sheet.deleteRow(i + 2);
       }
     });
+    // 3) ลบ chunks ใน PhotoData ที่เกี่ยวข้อง
+    if (fileIdsToDelete.length) {
+      const dataSheet = ss().getSheetByName(SHEET_PHOTO_DATA);
+      if (dataSheet && dataSheet.getLastRow() >= 2) {
+        const fidSet = {};
+        fileIdsToDelete.forEach(function (f) { fidSet[f] = true; });
+        const fids = dataSheet.getRange(2, 1, dataSheet.getLastRow() - 1, 1).getValues();
+        for (let i = fids.length - 1; i >= 0; i--) {
+          if (fidSet[String(fids[i][0])]) dataSheet.deleteRow(i + 2);
+        }
+      }
+    }
     return id;
   } finally {
     lock.releaseLock();

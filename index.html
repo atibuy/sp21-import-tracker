@@ -715,21 +715,12 @@ async function bootstrapFromCloud() {
     const remote = await cloudCall('list');
     if (Array.isArray(remote)) {
       const local = loadShipments();
-      const localById = Object.fromEntries(local.map(s => [s.id, s]));
       const remoteIds = new Set(remote.map(r => r.id));
       // shipments ที่อยู่ใน local แต่ cloud ยังไม่มี — เก็บไว้ + queue ไป sync ขึ้น cloud
       const localOnly = local.filter(s => !remoteIds.has(s.id));
       localOnly.forEach(s => enqueueOp({ action: 'save', payload: buildCloudPayload(s) }));
-      // merge: เอา photos จาก local มาเติม (รูปไม่ได้ขึ้น cloud)
-      const mergedRemote = remote.map(r => {
-        const l = localById[r.id];
-        if (l) {
-          if (l.stepB?.photos?.length && r.stepB) r.stepB.photos = l.stepB.photos;
-          if (l.stepE?.photos?.length && r.stepE) r.stepE.photos = l.stepE.photos;
-        }
-        return r;
-      });
-      saveShipmentsLocal(mergedRemote.concat(localOnly));
+      // photos ขึ้น cloud หมดแล้ว (base64 ใน Sheets) — ใช้ของ cloud เป็น source of truth
+      saveShipmentsLocal(remote.concat(localOnly));
     }
     setSyncStatus('online');
   } catch (e) {
