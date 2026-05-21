@@ -51,10 +51,14 @@ const SHEET_ITEMS      = 'Items';
 const SHEET_COSTS      = 'Costs';
 const SHEET_PHOTOS     = 'Photos';
 const SHEET_PHOTO_DATA = 'PhotoData';
+const SHEET_CARDS      = 'Cards';
 
 // โฟลเดอร์ราก ใน My Drive ของบัญชีที่ deploy script
-// โครงสร้าง: My Drive / SP21 / <containerNo> / <step>_<category>_<ts>_<rand>.<ext>
+// โครงสร้าง:
+//   My Drive / SP21 / <containerNo> / <step>_<category>_<ts>_<rand>.<ext>
+//   My Drive / SP21 / Cards / <cardId>_<category>_<ts>_<rand>.<ext>
 const DRIVE_ROOT_FOLDER = 'SP21';
+const DRIVE_CARDS_SUBFOLDER = 'Cards';
 
 // IMPORTANT: append-only — เพิ่ม column ใหม่ได้ที่ "ท้าย array" เท่านั้น
 // เพื่อให้ index ตรงกับ sheet ที่มีอยู่ (data เก่าจะอยู่ตำแหน่งเดิม)
@@ -107,6 +111,14 @@ const PHOTO_DATA_COLS = [
   'fileId', 'chunkIdx', 'totalChunks', 'dataChunk'
 ];
 
+// แต่ละ row = Card-purchase 1 รายการ
+// photos_json เก็บ array ของ {fileId,url,viewUrl,thumbUrl,name,uploadedAt,mimeType,category}
+const CARD_COLS = [
+  'id', 'createdAt', 'updatedAt',
+  'payDate', 'cardType', 'cardCount', 'pricePerCard',
+  'photos_json'
+];
+
 /* ================ Web app entry points ================ */
 
 function doGet(e) {
@@ -126,13 +138,17 @@ function doPost(e) {
 
 function handle(req) {
   try {
-    if (req.action === 'list')        return json({ ok: true, data: listShipments() });
-    if (req.action === 'save')        return json({ ok: true, data: upsertShipment(req.payload) });
-    if (req.action === 'delete')      return json({ ok: true, data: deleteShipmentById(req.id) });
-    if (req.action === 'init')        return json({ ok: true, data: initSheets() });
-    if (req.action === 'ping')        return json({ ok: true, data: 'pong' });
-    if (req.action === 'uploadPhoto') return json({ ok: true, data: uploadPhoto(req.payload) });
-    if (req.action === 'deletePhoto') return json({ ok: true, data: deletePhoto(req.payload) });
+    if (req.action === 'list')            return json({ ok: true, data: listShipments() });
+    if (req.action === 'save')            return json({ ok: true, data: upsertShipment(req.payload) });
+    if (req.action === 'delete')          return json({ ok: true, data: deleteShipmentById(req.id) });
+    if (req.action === 'init')            return json({ ok: true, data: initSheets() });
+    if (req.action === 'ping')            return json({ ok: true, data: 'pong' });
+    if (req.action === 'uploadPhoto')     return json({ ok: true, data: uploadPhoto(req.payload) });
+    if (req.action === 'deletePhoto')     return json({ ok: true, data: deletePhoto(req.payload) });
+    if (req.action === 'listCards')       return json({ ok: true, data: listCards() });
+    if (req.action === 'saveCard')        return json({ ok: true, data: upsertCard(req.payload) });
+    if (req.action === 'deleteCard')      return json({ ok: true, data: deleteCardById(req.id) });
+    if (req.action === 'uploadCardPhoto') return json({ ok: true, data: uploadCardPhoto(req.payload) });
     return json({ ok: false, error: 'Unknown action: ' + req.action });
   } catch (err) {
     return json({ ok: false, error: String(err && err.message || err), stack: String(err && err.stack || '') });
@@ -174,7 +190,8 @@ function initSheets() {
   getOrCreateSheet(SHEET_COSTS, COST_COLS);
   getOrCreateSheet(SHEET_PHOTOS, PHOTO_COLS);
   getOrCreateSheet(SHEET_PHOTO_DATA, PHOTO_DATA_COLS);
-  return 'Sheets initialized: ' + [SHEET_SHIPMENTS, SHEET_ITEMS, SHEET_COSTS, SHEET_PHOTOS, SHEET_PHOTO_DATA].join(', ');
+  getOrCreateSheet(SHEET_CARDS, CARD_COLS);
+  return 'Sheets initialized: ' + [SHEET_SHIPMENTS, SHEET_ITEMS, SHEET_COSTS, SHEET_PHOTOS, SHEET_PHOTO_DATA, SHEET_CARDS].join(', ');
 }
 
 /* ================ Photo storage (Google Drive) ================ */
@@ -672,6 +689,149 @@ function replacePhotosFor(shipmentId, photos) {
     return row;
   });
   sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, PHOTO_COLS.length).setValues(rows);
+}
+
+/* ================ Cards (Card-service purchases) ================ */
+
+function getCardsFolder() {
+  const root = getOrCreateChildFolder(DriveApp.getRootFolder(), DRIVE_ROOT_FOLDER);
+  return getOrCreateChildFolder(root, DRIVE_CARDS_SUBFOLDER);
+}
+
+function uploadCardPhoto(payload) {
+  if (!payload || !payload.cardId) throw new Error('cardId required');
+  if (!payload.dataUrl) throw new Error('dataUrl required');
+  const m = String(payload.dataUrl).match(/^data:([^;]+);base64,(.+)$/);
+  if (!m) throw new Error('Invalid dataUrl');
+  const mime = m[1];
+  const b64 = m[2];
+
+  const cardId = sanitizeFolderName(payload.cardId);
+  const category = String(payload.category || 'general').replace(/[^A-Za-z0-9_-]/g, '_') || 'general';
+  const ext = (mime.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+  const ts = Utilities.formatDate(new Date(), 'GMT+7', 'yyyyMMdd_HHmmss');
+  const rand = Math.random().toString(36).slice(2, 6);
+  const safeName = cardId + '_' + category + '_' + ts + '_' + rand + '.' + ext;
+
+  const folder = getCardsFolder();
+  const bytes = Utilities.base64Decode(b64);
+  const blob = Utilities.newBlob(bytes, mime, safeName);
+  const file = folder.createFile(blob);
+
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (e) {
+    try { file.setTrashed(true); } catch (_) {}
+    throw new Error('ตั้งสิทธิ์แชร์ไฟล์ไม่ได้ (org/domain policy ห้าม share สาธารณะ?): ' + (e && e.message || e));
+  }
+
+  const fileId = file.getId();
+  return {
+    fileId: fileId,
+    url:      buildDriveImageUrl(fileId, 2000),
+    viewUrl:  buildDriveViewUrl(fileId),
+    thumbUrl: buildDriveImageUrl(fileId, 400),
+    name: safeName,
+    uploadedAt: new Date().toISOString(),
+    mimeType: mime
+  };
+}
+
+function listCards() {
+  const sheet = getOrCreateSheet(SHEET_CARDS, CARD_COLS);
+  if (sheet.getLastRow() < 2) return [];
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, CARD_COLS.length).getValues();
+  const ix = function (name) { return CARD_COLS.indexOf(name); };
+  const toIso = function (v) { return v instanceof Date ? v.toISOString() : (v || null); };
+  return rows.map(function (r) {
+    let photos = [];
+    const raw = r[ix('photos_json')];
+    if (raw) { try { photos = JSON.parse(raw) || []; } catch (e) { photos = []; } }
+    return {
+      id: String(r[ix('id')] || ''),
+      createdAt: toIso(r[ix('createdAt')]),
+      updatedAt: toIso(r[ix('updatedAt')]),
+      payDate: toIso(r[ix('payDate')]),
+      cardType: r[ix('cardType')] || '',
+      cardCount: Number(r[ix('cardCount')]) || 0,
+      pricePerCard: Number(r[ix('pricePerCard')]) || 0,
+      photos: Array.isArray(photos) ? photos : []
+    };
+  });
+}
+
+function upsertCard(payload) {
+  if (!payload || !payload.card) throw new Error('payload.card is required');
+  const c = payload.card;
+  if (!c.id) throw new Error('card.id is required');
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const sheet = getOrCreateSheet(SHEET_CARDS, CARD_COLS);
+    const row = new Array(CARD_COLS.length).fill('');
+    const set = function (name, val) {
+      const idx = CARD_COLS.indexOf(name);
+      if (idx >= 0) row[idx] = val == null ? '' : val;
+    };
+    set('id', c.id);
+    set('createdAt', c.createdAt || '');
+    set('updatedAt', c.updatedAt || new Date().toISOString());
+    set('payDate', c.payDate || '');
+    set('cardType', c.cardType || '');
+    set('cardCount', Number(c.cardCount) || 0);
+    set('pricePerCard', Number(c.pricePerCard) || 0);
+    const photos = Array.isArray(c.photos) ? c.photos.filter(function (p) { return p && p.fileId; }) : [];
+    set('photos_json', JSON.stringify(photos));
+
+    const lastRow = sheet.getLastRow();
+    let foundIdx = -1;
+    if (lastRow >= 2) {
+      const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+      for (let i = 0; i < ids.length; i++) {
+        if (String(ids[i][0]) === String(c.id)) { foundIdx = i; break; }
+      }
+    }
+    if (foundIdx === -1) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, 1, CARD_COLS.length).setValues([row]);
+    } else {
+      sheet.getRange(foundIdx + 2, 1, 1, CARD_COLS.length).setValues([row]);
+    }
+    return c.id;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function deleteCardById(id) {
+  if (!id) throw new Error('id is required');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const sheet = ss().getSheetByName(SHEET_CARDS);
+    if (!sheet || sheet.getLastRow() < 2) return id;
+    const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, CARD_COLS.length).getValues();
+    const ix = function (name) { return CARD_COLS.indexOf(name); };
+    const photoFileIds = [];
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (String(rows[i][ix('id')]) === String(id)) {
+        const raw = rows[i][ix('photos_json')];
+        if (raw) {
+          try {
+            const photos = JSON.parse(raw) || [];
+            photos.forEach(function (p) { if (p && p.fileId) photoFileIds.push(String(p.fileId)); });
+          } catch (e) { /* ignore */ }
+        }
+        sheet.deleteRow(i + 2);
+      }
+    }
+    photoFileIds.forEach(function (fid) {
+      try { DriveApp.getFileById(fid).setTrashed(true); } catch (e) { /* ignore */ }
+    });
+    return id;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /* ================ Delete ================ */

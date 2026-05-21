@@ -103,6 +103,7 @@
   }
   .mode-card .icon.owner { background: var(--primary-100); color: var(--primary); }
   .mode-card .icon.staff { background: #d1fae5; color: var(--success); }
+  .mode-card .icon.cards { background: #ede9fe; color: var(--purple); }
   .mode-card .info { flex: 1; }
   .mode-card .info h3 { font-size: 17px; font-weight: 600; margin-bottom: 2px; }
   .mode-card .info p { color: var(--text-secondary); font-size: 13px; }
@@ -565,9 +566,10 @@ const STATUS_INFO = {
 
 /* ============ State ============ */
 const state = {
-  mode: null, // 'owner' | 'staff'
+  mode: null, // 'owner' | 'staff' | 'cards'
   view: null,
   currentId: null,
+  currentCardId: null,
   filter: 'all'
 };
 
@@ -579,6 +581,7 @@ const CLOUD_CONFIG = {
 };
 const SYNC_QUEUE_KEY = 'shipments_pendingSync';
 const STORAGE_KEY = 'shipments';
+const STORAGE_KEY_CARDS = 'cards';
 
 function cloudEnabled() { return !!CLOUD_CONFIG.webAppUrl; }
 function isOnline() { return typeof navigator === 'undefined' ? true : navigator.onLine !== false; }
@@ -623,8 +626,10 @@ function enqueueOp(op) {
   // ถ้ามี op save/delete ของ id เดิมอยู่แล้ว ให้แทนที่ (เอาค่าล่าสุดพอ)
   const sameTarget = o => {
     if (op.action !== o.action) return false;
-    if (op.action === 'delete') return o.id === op.id;
-    if (op.action === 'save')   return o.payload?.shipment?.id === op.payload?.shipment?.id;
+    if (op.action === 'delete')     return o.id === op.id;
+    if (op.action === 'deleteCard') return o.id === op.id;
+    if (op.action === 'save')       return o.payload?.shipment?.id === op.payload?.shipment?.id;
+    if (op.action === 'saveCard')   return o.payload?.card?.id === op.payload?.card?.id;
     return false;
   };
   const filtered = q.filter(o => !sameTarget(o));
@@ -641,7 +646,8 @@ async function drainQueue() {
   const remaining = [];
   for (const op of q) {
     try {
-      await cloudCall(op.action, op.action === 'save' ? { payload: op.payload } : { id: op.id });
+      const body = op.payload ? { payload: op.payload } : { id: op.id };
+      await cloudCall(op.action, body);
     } catch (e) {
       remaining.push(op);
     }
@@ -714,20 +720,89 @@ function deleteShipment(id) {
   return true;
 }
 
+/* ============ Cards storage + sync ============ */
+function loadCards() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY_CARDS) || '[]'); }
+  catch { return []; }
+}
+function saveCardsLocal(arr) {
+  try {
+    localStorage.setItem(STORAGE_KEY_CARDS, JSON.stringify(arr));
+    return true;
+  } catch (e) {
+    toast('พื้นที่เก็บข้อมูลเต็ม', 'error');
+    return false;
+  }
+}
+function getCard(id) { return loadCards().find(c => c.id === id); }
+
+function cloudPushCard(c) {
+  if (!cloudEnabled()) return;
+  const payload = { card: c };
+  if (!isOnline()) { enqueueOp({ action: 'saveCard', payload }); return; }
+  setSyncStatus('syncing');
+  cloudCall('saveCard', { payload })
+    .then(() => { if (readQueue().length === 0) setSyncStatus('online'); else drainQueue(); })
+    .catch(() => { enqueueOp({ action: 'saveCard', payload }); });
+}
+
+function cloudDeleteCard(id) {
+  if (!cloudEnabled()) return;
+  if (!isOnline()) { enqueueOp({ action: 'deleteCard', id }); return; }
+  setSyncStatus('syncing');
+  cloudCall('deleteCard', { id })
+    .then(() => { if (readQueue().length === 0) setSyncStatus('online'); else drainQueue(); })
+    .catch(() => { enqueueOp({ action: 'deleteCard', id }); });
+}
+
+function upsertCardLocal(card) {
+  const all = loadCards();
+  const idx = all.findIndex(c => c.id === card.id);
+  if (idx === -1) all.push(card); else all[idx] = card;
+  if (!saveCardsLocal(all)) return false;
+  cloudPushCard(card);
+  return true;
+}
+
+function deleteCardLocal(id) {
+  const all = loadCards().filter(c => c.id !== id);
+  if (!saveCardsLocal(all)) return false;
+  cloudDeleteCard(id);
+  return true;
+}
+
+function nextCardId() {
+  const beYear2 = String((new Date().getFullYear() + 543) % 100).padStart(2, '0');
+  const prefix = `CARD-${beYear2}-`;
+  const all = loadCards();
+  const max = all.filter(c => c.id.startsWith(prefix))
+    .reduce((m, c) => Math.max(m, parseInt(c.id.slice(prefix.length), 10) || 0), 0);
+  return `${prefix}${String(max + 1).padStart(3, '0')}`;
+}
+
 /* ============ Bootstrap from cloud (with localStorage fallback) ============ */
 async function bootstrapFromCloud() {
   if (!cloudEnabled()) { setSyncStatus(); return; }
   setSyncStatus('syncing', 'กำลังโหลด...');
   try {
-    const remote = await cloudCall('list');
+    const [remote, remoteCards] = await Promise.all([
+      cloudCall('list').catch(() => null),
+      cloudCall('listCards').catch(() => null)
+    ]);
     if (Array.isArray(remote)) {
       const local = loadShipments();
       const remoteIds = new Set(remote.map(r => r.id));
       // shipments ที่อยู่ใน local แต่ cloud ยังไม่มี — เก็บไว้ + queue ไป sync ขึ้น cloud
       const localOnly = local.filter(s => !remoteIds.has(s.id));
       localOnly.forEach(s => enqueueOp({ action: 'save', payload: buildCloudPayload(s) }));
-      // photos ขึ้น cloud หมดแล้ว (base64 ใน Sheets) — ใช้ของ cloud เป็น source of truth
       saveShipmentsLocal(remote.concat(localOnly));
+    }
+    if (Array.isArray(remoteCards)) {
+      const local = loadCards();
+      const remoteIds = new Set(remoteCards.map(r => r.id));
+      const localOnly = local.filter(c => !remoteIds.has(c.id));
+      localOnly.forEach(c => enqueueOp({ action: 'saveCard', payload: { card: c } }));
+      saveCardsLocal(remoteCards.concat(localOnly));
     }
     setSyncStatus('online');
   } catch (e) {
@@ -1110,7 +1185,7 @@ function renderPhotosViewerForStep(stepData) {
 /* ============ Renderer ============ */
 function renderTopbar(title, showBack = true, extras = '') {
   const t = document.getElementById('topbar');
-  const modeName = state.mode === 'owner' ? 'เจ้าของ' : (state.mode === 'staff' ? 'พนักงาน' : '');
+  const modeName = state.mode === 'owner' ? 'เจ้าของ' : (state.mode === 'staff' ? 'พนักงาน' : (state.mode === 'cards' ? 'Card' : ''));
   t.innerHTML = `
     ${showBack ? `<button class="back-btn" onclick="back()">←</button>` : `<div style="width:8px"></div>`}
     <h1>${escapeHtml(title)}</h1>
@@ -1127,7 +1202,7 @@ function renderBottomBar(html) {
 }
 
 function back() {
-  if (state.view === 'owner-dashboard' || state.view === 'staff-dashboard') {
+  if (state.view === 'owner-dashboard' || state.view === 'staff-dashboard' || state.view === 'cards-dashboard') {
     state.mode = null;
     state.view = null;
     render();
@@ -1138,6 +1213,10 @@ function back() {
   } else if (state.view && state.view.startsWith('staff-')) {
     state.view = 'staff-dashboard';
     state.currentId = null;
+    render();
+  } else if (state.view && state.view.startsWith('cards-')) {
+    state.view = 'cards-dashboard';
+    state.currentCardId = null;
     render();
   } else {
     state.view = null;
@@ -1173,6 +1252,10 @@ function render() {
     if (state.view === 'staff-detail') return renderStaffDetail();
     if (state.view === 'staff-step-e') return renderStepE();
   }
+  if (state.mode === 'cards') {
+    if (!state.view || state.view === 'cards-dashboard') return renderCardList();
+    if (state.view === 'cards-form') return renderCardForm(state.currentCardId);
+  }
 }
 
 /* ============ Views: Mode select ============ */
@@ -1201,6 +1284,14 @@ function renderModeSelect() {
           <div class="info">
             <h3>พนักงาน</h3>
             <p>รับของหน้าคลัง บันทึกค่าขนส่ง</p>
+          </div>
+          <div class="arrow">›</div>
+        </button>
+        <button class="mode-card" onclick="selectMode('cards')">
+          <div class="icon cards">💳</div>
+          <div class="info">
+            <h3>Card บริการ</h3>
+            <p>บันทึกการซื้อ Card</p>
           </div>
           <div class="arrow">›</div>
         </button>
@@ -2305,6 +2396,349 @@ function confirmReceive(id) {
   }, 'ยืนยัน', 'btn-success');
 }
 
+/* ============ Card บริการ ============ */
+const CARD_TYPE_LABEL = { annual: 'รายปี', lifetime: 'ตลอดชีพ' };
+const CARD_PHOTO_CATEGORIES = [
+  { key: 'agent_transfer', label: 'โอนเงินให้ตัวแทน',      icon: '🏦' },
+  { key: 'china_transfer', label: 'ตัวแทนโอนไปจีน',         icon: '💴' }
+];
+const CARD_PHOTO_CAT_INFO = {};
+CARD_PHOTO_CATEGORIES.forEach(c => { CARD_PHOTO_CAT_INFO[c.key] = c; });
+
+// state ระหว่างกรอกฟอร์ม Card: { category: [{fileId,...}] }
+let tempCardPhotosByCategory = {};
+
+function loadTempCardPhotos(card) {
+  tempCardPhotosByCategory = {};
+  (card?.photos || []).forEach(p => {
+    if (!p || !p.fileId) return;
+    const k = p.category || 'general';
+    (tempCardPhotosByCategory[k] = tempCardPhotosByCategory[k] || []).push(p);
+  });
+}
+
+function collectCardPhotos() {
+  const out = [];
+  Object.entries(tempCardPhotosByCategory).forEach(([cat, list]) => {
+    list.forEach(p => out.push(Object.assign({}, p, { category: cat })));
+  });
+  return out;
+}
+
+async function uploadCardPhotoToCloud(dataUrl, cardId, category) {
+  return await cloudCall('uploadCardPhoto', { payload: { cardId, category, dataUrl } });
+}
+
+function renderCardPhotoGrid(catKey) {
+  const list = tempCardPhotosByCategory[catKey] || [];
+  return list.map((p, i) => {
+    const preview = isPdfAttachment(p)
+      ? `<div class="pdf-thumb">📄<span class="pdf-label">PDF</span></div>`
+      : `<img src="${p.thumbUrl || p.url}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.opacity='0.3'">`;
+    return `
+      <div class="photo-thumb">
+        ${preview}
+        <a class="view-photo" href="${p.viewUrl || p.url}" target="_blank" rel="noopener" title="${isPdfAttachment(p) ? 'เปิดดู PDF' : 'เปิดดูภาพ'}">↗</a>
+        <button class="delete-photo" onclick="removeCardPhoto('${catKey}', ${i})">×</button>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderCardPhotoSection(cat) {
+  return `
+    <div class="photo-cat-block">
+      <div class="photo-cat-head">
+        <span>${cat.icon} ${cat.label}</span>
+        <span class="count" id="card-count-${cat.key}">${(tempCardPhotosByCategory[cat.key] || []).length} รูป</span>
+      </div>
+      <div class="photo-grid" id="card-grid-${cat.key}">${renderCardPhotoGrid(cat.key)}</div>
+      <label class="photo-add" style="display:inline-flex;margin-top:8px;width:80px;font-size:24px">
+        <input type="file" accept="image/*,application/pdf" multiple onchange="uploadCardPhotos(this, '${cat.key}')">
+        ＋
+      </label>
+    </div>
+  `;
+}
+
+function refreshCardCategoryGrid(catKey) {
+  const gridEl = document.getElementById('card-grid-' + catKey);
+  if (gridEl) gridEl.innerHTML = renderCardPhotoGrid(catKey);
+  const countEl = document.getElementById('card-count-' + catKey);
+  if (countEl) countEl.textContent = (tempCardPhotosByCategory[catKey] || []).length + ' รูป';
+}
+
+async function uploadCardPhotos(input, catKey) {
+  if (!cloudEnabled()) { toast('ต้องตั้งค่า Cloud sync ก่อน', 'error'); input.value = ''; return; }
+  if (!isOnline()) { toast('ต้องออนไลน์เพื่ออัปโหลดรูป', 'error'); input.value = ''; return; }
+  const cardId = state.currentCardId;
+  if (!cardId) { toast('ไม่พบ Card ID', 'error'); input.value = ''; return; }
+  const files = [...input.files];
+  input.value = '';
+  const gridEl = document.getElementById('card-grid-' + catKey);
+  for (const f of files) {
+    let placeholder;
+    if (gridEl) {
+      placeholder = document.createElement('div');
+      placeholder.className = 'photo-uploading';
+      placeholder.textContent = '⏳';
+      gridEl.appendChild(placeholder);
+    }
+    try {
+      const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+      const data = isPdf ? await readFileAsDataURL(f) : await compressImage(f);
+      const meta = await uploadCardPhotoToCloud(data, cardId, catKey);
+      const list = (tempCardPhotosByCategory[catKey] = tempCardPhotosByCategory[catKey] || []);
+      list.push(Object.assign({ category: catKey }, meta));
+    } catch (e) {
+      console.error(e);
+      toast('อัปโหลดล้มเหลว: ' + (e.message || e), 'error');
+    } finally {
+      if (placeholder && placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
+    }
+  }
+  refreshCardCategoryGrid(catKey);
+}
+
+function removeCardPhoto(catKey, idx) {
+  const list = tempCardPhotosByCategory[catKey];
+  if (!list || !list[idx]) return;
+  const removed = list.splice(idx, 1)[0];
+  refreshCardCategoryGrid(catKey);
+  if (removed?.fileId && cloudEnabled() && isOnline()) {
+    cloudCall('deletePhoto', { payload: { fileId: removed.fileId } }).catch(() => {});
+  }
+}
+
+function renderCardPhotosViewer(card) {
+  const photos = (card?.photos || []).filter(p => p && p.fileId);
+  if (photos.length === 0) return '';
+  const byCat = {};
+  photos.forEach(p => {
+    const k = p.category || 'general';
+    (byCat[k] = byCat[k] || []).push(p);
+  });
+  return Object.entries(byCat).map(([catKey, list]) => {
+    const info = CARD_PHOTO_CAT_INFO[catKey] || { icon: '📎', label: catKey };
+    return `
+      <div style="margin-top:10px">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">${info.icon} ${escapeHtml(info.label)} · ${list.length} รูป</div>
+        <div class="photo-grid">
+          ${list.map(p => {
+            const isPdf = isPdfAttachment(p);
+            const preview = isPdf
+              ? `<div class="pdf-thumb">📄<span class="pdf-label">PDF</span></div>`
+              : `<img src="${p.thumbUrl || p.url}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.opacity='0.3'">`;
+            return `
+            <a class="photo-thumb" href="${p.viewUrl || p.url}" target="_blank" rel="noopener" title="${isPdf ? 'เปิดดู PDF' : 'ดูภาพเต็ม'}">
+              ${preview}
+              <span class="view-photo" style="pointer-events:none">↗</span>
+            </a>`;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderCardList() {
+  renderTopbar('Card บริการ', false);
+  const all = loadCards().slice().sort((a,b) => {
+    const da = a.payDate || a.createdAt || '';
+    const db = b.payDate || b.createdAt || '';
+    return db.localeCompare(da);
+  });
+
+  const totalCards = all.reduce((s, c) => s + (Number(c.cardCount) || 0), 0);
+  const totalSpend = all.reduce((s, c) => s + (Number(c.cardCount) || 0) * (Number(c.pricePerCard) || 0), 0);
+  const annualCount = all.filter(c => c.cardType === 'annual').length;
+  const lifetimeCount = all.filter(c => c.cardType === 'lifetime').length;
+
+  let listHtml;
+  if (all.length === 0) {
+    listHtml = `<div class="empty"><div class="icon">💳</div><p>ยังไม่มีรายการซื้อ Card<br>กดปุ่มด้านล่างเพื่อบันทึก</p></div>`;
+  } else {
+    listHtml = all.map(c => {
+      const total = (Number(c.cardCount) || 0) * (Number(c.pricePerCard) || 0);
+      const typeLabel = CARD_TYPE_LABEL[c.cardType] || '-';
+      return `
+        <div class="shipment-card" onclick="openCard('${c.id}')">
+          <div class="head">
+            <div class="id">${escapeHtml(c.id)}</div>
+            <span class="badge">${escapeHtml(typeLabel)}</span>
+          </div>
+          <div class="meta">
+            <span>📅 ${fmtDate(c.payDate)}</span>
+            <span>💳 ${fmtNum(c.cardCount)} ใบ</span>
+            <span>💰 ${fmtBaht(c.pricePerCard, 0)} ฿/ใบ</span>
+          </div>
+          <div class="footer">
+            <span class="total">รวม <strong>${fmtBaht(total, 2)} ฿</strong></span>
+            <span style="color:var(--text-muted);font-size:13px">${(c.photos||[]).length} หลักฐาน</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  document.getElementById('main').innerHTML = `
+    <div class="summary-grid">
+      <div class="summary-card"><div class="label">รายการทั้งหมด</div><div class="value">${all.length}</div></div>
+      <div class="summary-card purple"><div class="label">Card รวม</div><div class="value">${fmtNum(totalCards)}</div></div>
+      <div class="summary-card orange"><div class="label">รายปี</div><div class="value">${annualCount}</div></div>
+      <div class="summary-card green"><div class="label">ตลอดชีพ</div><div class="value">${lifetimeCount}</div></div>
+    </div>
+    <div class="summary-card" style="margin-bottom:12px">
+      <div class="label">ยอดซื้อรวม</div>
+      <div class="value" style="color:var(--primary)">${fmtBaht(totalSpend, 2)} ฿</div>
+    </div>
+    <div class="section-header"><h2>ประวัติการซื้อ</h2></div>
+    ${listHtml}
+    <button class="fab" onclick="newCard()">＋ บันทึกการซื้อใหม่</button>
+  `;
+  renderBottomBar('');
+}
+
+function openCard(id) {
+  state.currentCardId = id;
+  state.view = 'cards-form';
+  render();
+}
+
+function newCard() {
+  state.currentCardId = nextCardId();
+  // สร้าง shell card ใน local ก่อน เพื่อให้ uploadCardPhoto อ้างถึงได้
+  const now = new Date().toISOString();
+  const shell = {
+    id: state.currentCardId,
+    createdAt: now,
+    updatedAt: now,
+    payDate: todayISO(),
+    cardType: 'annual',
+    cardCount: 0,
+    pricePerCard: 0,
+    photos: []
+  };
+  if (!upsertCardLocal(shell)) return;
+  state.view = 'cards-form';
+  render();
+}
+
+function renderCardForm(id) {
+  const c = getCard(id);
+  if (!c) { state.view = 'cards-dashboard'; render(); return; }
+  renderTopbar(c.id);
+  loadTempCardPhotos(c);
+
+  const cardCount = Number(c.cardCount) || 0;
+  const pricePerCard = Number(c.pricePerCard) || 0;
+  const total = cardCount * pricePerCard;
+
+  document.getElementById('main').innerHTML = `
+    <div class="form-section">
+      <h3>💳 รายละเอียดการซื้อ</h3>
+      <div class="field">
+        <label>วันที่จ่ายเงิน <span class="req">*</span></label>
+        <input type="date" id="card-payDate" value="${escapeHtml(c.payDate || todayISO())}">
+      </div>
+      <div class="field">
+        <label>ประเภท Card <span class="req">*</span></label>
+        <div class="radio-group">
+          <label class="radio-card ${c.cardType==='annual'?'selected':''}" onclick="selectCardType('annual')">
+            <input type="radio" name="cardType" value="annual" ${c.cardType==='annual'?'checked':''}>
+            รายปี
+          </label>
+          <label class="radio-card ${c.cardType==='lifetime'?'selected':''}" onclick="selectCardType('lifetime')">
+            <input type="radio" name="cardType" value="lifetime" ${c.cardType==='lifetime'?'checked':''}>
+            ตลอดชีพ
+          </label>
+        </div>
+      </div>
+      <div class="field-grid">
+        <div class="field">
+          <label>จำนวน Card (ใบ) <span class="req">*</span></label>
+          <input type="number" id="card-count" min="0" inputmode="numeric" value="${cardCount || ''}" oninput="recalcCardTotal()">
+        </div>
+        <div class="field">
+          <label>ราคาต่อใบ (฿) <span class="req">*</span></label>
+          <input type="number" id="card-price" min="0" step="0.01" inputmode="decimal" value="${pricePerCard || ''}" oninput="recalcCardTotal()">
+        </div>
+      </div>
+      <div class="cost-summary" style="margin-bottom:0;margin-top:6px">
+        <h3>ยอดรวม</h3>
+        <div class="cost-row total"><span>รวมทั้งสิ้น</span><span id="card-total">${fmtBaht(total, 2)} ฿</span></div>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h3>📸 หลักฐาน / รูปภาพ</h3>
+      ${CARD_PHOTO_CATEGORIES.map(renderCardPhotoSection).join('')}
+    </div>
+  `;
+  renderBottomBar(`
+    <button class="btn btn-danger" onclick="confirmDeleteCard('${c.id}')">🗑 ลบ</button>
+    <button class="btn btn-primary" onclick="saveCard()">บันทึก</button>
+  `);
+}
+
+function selectCardType(type) {
+  const c = getCard(state.currentCardId);
+  if (!c) return;
+  c.cardType = type;
+  c.updatedAt = new Date().toISOString();
+  upsertCardLocal(c);
+  // อัปเดต UI radio ทันที โดยไม่ re-render ทั้งหมด (กันรูปที่ค้างใน input file)
+  document.querySelectorAll('.radio-card').forEach(el => el.classList.remove('selected'));
+  const target = document.querySelector(`.radio-card input[value="${type}"]`);
+  if (target) target.closest('.radio-card').classList.add('selected');
+}
+
+function recalcCardTotal() {
+  const count = Number(document.getElementById('card-count')?.value) || 0;
+  const price = Number(document.getElementById('card-price')?.value) || 0;
+  const el = document.getElementById('card-total');
+  if (el) el.textContent = fmtBaht(count * price, 2) + ' ฿';
+}
+
+function saveCard() {
+  const c = getCard(state.currentCardId);
+  if (!c) { toast('ไม่พบ Card', 'error'); return; }
+  const payDate = document.getElementById('card-payDate').value;
+  const cardType = document.querySelector('input[name="cardType"]:checked')?.value || c.cardType || 'annual';
+  const cardCount = Number(document.getElementById('card-count').value) || 0;
+  const pricePerCard = Number(document.getElementById('card-price').value) || 0;
+  if (!payDate)        { toast('ระบุวันที่จ่ายเงิน', 'error'); return; }
+  if (cardCount <= 0)  { toast('ระบุจำนวน Card', 'error'); return; }
+  if (pricePerCard <= 0) { toast('ระบุราคาต่อใบ', 'error'); return; }
+  const photos = collectCardPhotos();
+  const updated = Object.assign({}, c, {
+    payDate, cardType, cardCount, pricePerCard, photos,
+    updatedAt: new Date().toISOString()
+  });
+  if (!upsertCardLocal(updated)) return;
+  toast('บันทึกเรียบร้อย ✓', 'success');
+  state.view = 'cards-dashboard';
+  state.currentCardId = null;
+  render();
+}
+
+function confirmDeleteCard(id) {
+  const c = getCard(id);
+  if (!c) return;
+  confirmModal(
+    'ลบรายการ Card',
+    `ต้องการลบ ${c.id} ทั้งหมด (รวมรูป/PDF) ใช่หรือไม่?`,
+    () => {
+      deleteCardLocal(id);
+      toast('ลบแล้ว', 'success');
+      state.view = 'cards-dashboard';
+      state.currentCardId = null;
+      render();
+    },
+    'ลบ', 'btn-danger'
+  );
+}
+
 /* ============ Init ============ */
 window.addEventListener('DOMContentLoaded', async () => {
   setSyncStatus();
@@ -2341,6 +2775,14 @@ window.confirmReceive = confirmReceive;
 window.comboClear = comboClear;
 window.comboSetValue = comboSetValue;
 window.selectAlloc = selectAlloc;
+window.newCard = newCard;
+window.openCard = openCard;
+window.saveCard = saveCard;
+window.selectCardType = selectCardType;
+window.recalcCardTotal = recalcCardTotal;
+window.confirmDeleteCard = confirmDeleteCard;
+window.uploadCardPhotos = uploadCardPhotos;
+window.removeCardPhoto = removeCardPhoto;
 </script>
 </body>
 </html>
