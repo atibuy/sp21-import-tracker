@@ -534,6 +534,71 @@
   #sync-dot.queued::before  { background: #f59e0b; }
   #sync-dot.syncing::before { background: #3b82f6; animation: pulse 1s infinite; }
   @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.3 } }
+
+  /* ===== Print report ===== */
+  .print-btn {
+    padding: 6px 12px; border-radius: 8px;
+    background: var(--primary-50); color: var(--primary);
+    font-size: 13px; font-weight: 600;
+    border: 1px solid var(--primary-100);
+  }
+  .print-btn:active { background: var(--primary-100); }
+  .print-report { display: none; }
+  @media print {
+    @page { size: A4; margin: 10mm 12mm; }
+    html, body { background: #fff !important; }
+    .app, #bottom-bar, .toast, #sync-dot, .modal-backdrop, .fab, .print-btn { display: none !important; }
+    .print-report {
+      display: block !important;
+      color: #000; background: #fff;
+      font-family: 'Sarabun', sans-serif;
+      font-size: 12px; line-height: 1.45;
+    }
+    .print-report .pr-header {
+      border-bottom: 2px solid #000;
+      padding-bottom: 8px; margin-bottom: 14px;
+    }
+    .print-report .pr-title { font-size: 20px; font-weight: 700; }
+    .print-report .pr-meta { font-size: 11px; color: #555; margin-top: 4px; }
+    .print-report .pr-shipment {
+      border: 1px solid #ccc; padding: 10px 12px; margin-bottom: 10px;
+      page-break-inside: avoid;
+    }
+    .print-report .pr-shipment-head {
+      display: flex; justify-content: space-between; align-items: flex-end;
+      border-bottom: 1px solid #999; padding-bottom: 6px; margin-bottom: 8px;
+    }
+    .print-report .pr-shipment-id { font-weight: 700; font-size: 14px; }
+    .print-report .pr-shipment-status { font-size: 11px; color: #555; }
+    .print-report .pr-info-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 12px;
+      font-size: 11px; margin-bottom: 8px;
+    }
+    .print-report .pr-info-grid .label { color: #666; font-size: 10px; }
+    .print-report .pr-info-grid .value { font-weight: 600; }
+    .print-report table { width: 100%; border-collapse: collapse; font-size: 10.5px; margin-top: 4px; }
+    .print-report th, .print-report td { border: 1px solid #aaa; padding: 4px 6px; vertical-align: top; }
+    .print-report th { background: #f0f0f0; font-weight: 600; text-align: left; font-size: 10px; }
+    .print-report td.num, .print-report th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .print-report .pr-section-title { font-size: 11px; font-weight: 700; margin-top: 8px; margin-bottom: 4px; color: #333; }
+    .print-report .pr-totals {
+      margin-top: 6px; padding: 6px 8px; background: #f7f7f7;
+      border: 1px solid #ddd; border-radius: 4px;
+    }
+    .print-report .pr-totals .row {
+      display: flex; justify-content: space-between; padding: 2px 0; font-size: 11px;
+    }
+    .print-report .pr-totals .row.total {
+      font-weight: 700; font-size: 13px;
+      border-top: 1px solid #000; padding-top: 4px; margin-top: 4px;
+    }
+    .print-report .pr-footer { margin-top: 16px; padding-top: 8px; border-top: 1px solid #ccc; font-size: 10px; color: #777; text-align: center; }
+    .pr-summary-box {
+      background: #f7f7f7; border: 1px solid #ddd; border-radius: 4px;
+      padding: 8px 12px; margin-bottom: 12px;
+      page-break-inside: avoid;
+    }
+  }
 </style>
 </head>
 <body>
@@ -547,6 +612,7 @@
 <div class="modal-backdrop" id="modal-backdrop">
   <div class="modal" id="modal-content"></div>
 </div>
+<div class="print-report" id="print-report"></div>
 
 <script>
 'use strict';
@@ -1342,7 +1408,10 @@ function renderOwnerDashboard() {
         return `<button class="filter-tab ${state.filter===f?'active':''}" onclick="setFilter('${f}')">${label}</button>`;
       }).join('')}
     </div>
-    <div class="section-header"><h2>รายการ Shipment</h2></div>
+    <div class="section-header">
+      <h2>รายการ Shipment</h2>
+      <button class="print-btn" onclick="printShipmentReport()">🖨️ พิมพ์รายงาน</button>
+    </div>
     ${listHtml}
     <button class="fab" onclick="newShipment()">＋ Shipment ใหม่</button>
   `;
@@ -2668,7 +2737,10 @@ function renderCardList() {
       <div class="summary-card orange"><div class="label">รายปี · ทุน/ใบ</div><div class="value" style="font-size:18px">${avgAnnual > 0 ? fmtBaht(avgAnnual, 2) : '-'} ฿</div></div>
       <div class="summary-card green"><div class="label">ตลอดชีพ · ทุน/ใบ</div><div class="value" style="font-size:18px">${avgLifetime > 0 ? fmtBaht(avgLifetime, 2) : '-'} ฿</div></div>
     </div>
-    <div class="section-header"><h2>ประวัติการซื้อ</h2></div>
+    <div class="section-header">
+      <h2>ประวัติการซื้อ</h2>
+      <button class="print-btn" onclick="printCardReport()">🖨️ พิมพ์รายงาน</button>
+    </div>
     ${listHtml}
     <button class="fab" onclick="newCard()">＋ บันทึกการซื้อใหม่</button>
   `;
@@ -2878,6 +2950,305 @@ function confirmDeleteCard(id) {
   );
 }
 
+/* ============ Print Reports ============ */
+function fmtNow() {
+  const d = new Date();
+  const day = String(d.getDate()).padStart(2,'0');
+  const mon = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'][d.getMonth()];
+  const yr = (d.getFullYear() + 543) % 100;
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  return `${day} ${mon} ${yr} เวลา ${hh}:${mm}`;
+}
+
+function buildShipmentReportSection(s) {
+  const status = computeStatus(s);
+  const statusLabel = (STATUS_INFO[status] && STATUS_INFO[status].label) || status;
+  const containerNo = s.containerNo || s.id;
+  const items = (s.stepA && s.stepA.items) || [];
+
+  // รวมโรงงานเป็น list ไม่ซ้ำ
+  const factories = Array.from(new Set(items.map(it => it.factory).filter(Boolean)));
+
+  const info = [
+    ['Container No', escapeHtml(containerNo)],
+    ['สถานะ', escapeHtml(statusLabel)],
+    ['วันที่สั่ง', fmtDate(s.stepA?.orderDate)],
+    ['วันที่ส่งของ', fmtDate(s.stepB?.shipDate)],
+    ['วันที่ถึงไทย', fmtDate(s.stepD?.arrivalDate)],
+    ['ผู้ขนส่ง', escapeHtml(s.stepC?.carrier || '-')],
+    ['โหมดขนส่ง', escapeHtml(s.stepC?.transportMode || '-')],
+    ['โรงงาน', factories.length ? escapeHtml(factories.join(', ')) : '-'],
+    ['เรท ¥1 = ฿', s.stepA?.exchangeRate ? fmtBaht(s.stepA.exchangeRate, 4) : '-']
+  ];
+
+  let itemsHtml = '';
+  let costsHtml = '';
+  let totalsHtml = '';
+  const costs = calcCosts(s);
+  if (costs) {
+    itemsHtml = `
+      <div class="pr-section-title">รายการสินค้า (${costs.perItem.length})</div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:24px">#</th>
+            <th>SKU / ชื่อ</th>
+            <th>โรงงาน</th>
+            <th class="num">ลัง</th>
+            <th class="num">×ลัง</th>
+            <th class="num">รวม</th>
+            <th class="num">¥</th>
+            <th class="num">฿ สินค้า</th>
+            <th class="num">฿ ส่ง+อื่นๆ</th>
+            <th class="num">฿ รวม</th>
+            <th class="num">฿/ชิ้น</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${costs.perItem.map((p, i) => {
+            const factory = (items[i] && items[i].factory) || '-';
+            return `
+              <tr>
+                <td>${i + 1}</td>
+                <td>${escapeHtml(p.sku || '')}${p.name && p.name !== p.sku ? `<br><span style="font-size:9.5px;color:#666">${escapeHtml(p.name)}</span>` : ''}</td>
+                <td>${escapeHtml(factory)}</td>
+                <td class="num">${fmtNum(p.boxes)}</td>
+                <td class="num">${fmtNum(p.perBox)}</td>
+                <td class="num">${fmtNum(p.totalPieces)}</td>
+                <td class="num">${fmtBaht(p.yuan, 2)}</td>
+                <td class="num">${fmtBaht(p.baht, 2)}</td>
+                <td class="num">${fmtBaht(p.allocExtra, 2)}</td>
+                <td class="num"><strong>${fmtBaht(p.totalCost, 2)}</strong></td>
+                <td class="num"><strong>${fmtBaht(p.perUnit, 2)}</strong></td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+    costsHtml = `
+      <div class="pr-section-title">ค่าใช้จ่าย</div>
+      <table>
+        <thead><tr><th>หมวด</th><th class="num">จำนวน (฿)</th></tr></thead>
+        <tbody>
+          <tr><td>ค่าขนส่งจีน→ไทย</td><td class="num">${fmtBaht(costs.shippingCost, 2)}</td></tr>
+          <tr><td>ค่าภาษีศุลกากร</td><td class="num">${fmtBaht(costs.customs, 2)}</td></tr>
+          <tr><td>VAT</td><td class="num">${fmtBaht(costs.vat, 2)}</td></tr>
+          <tr><td>TPI → นิ่ม</td><td class="num">${fmtBaht(costs.tpiToNim, 2)}</td></tr>
+          <tr><td>นิ่ม Express</td><td class="num">${fmtBaht(costs.nim, 2)}</td></tr>
+          <tr><td><strong>ค่าขนส่ง+อื่นๆ รวม</strong></td><td class="num"><strong>${fmtBaht(costs.totalExtra, 2)}</strong></td></tr>
+        </tbody>
+      </table>
+    `;
+    totalsHtml = `
+      <div class="pr-totals">
+        <div class="row"><span>ยอดสินค้า (¥)</span><span>${fmtBaht(costs.totalYuan, 2)} ¥</span></div>
+        <div class="row"><span>ยอดสินค้า (฿)</span><span>${fmtBaht(costs.totalProduct, 2)} ฿</span></div>
+        <div class="row"><span>ค่าขนส่ง + อื่นๆ</span><span>${fmtBaht(costs.totalExtra, 2)} ฿</span></div>
+        <div class="row"><span>จำนวนชิ้นทั้งหมด</span><span>${fmtNum(costs.totalPieces)} ชิ้น</span></div>
+        <div class="row total"><span>ต้นทุนรวมทั้งสิ้น</span><span>${fmtBaht(costs.grandTotal, 2)} ฿</span></div>
+        <div class="row total"><span>ต้นทุนเฉลี่ยต่อชิ้น</span><span>${costs.totalPieces > 0 ? fmtBaht(costs.grandTotal / costs.totalPieces, 2) : '-'} ฿</span></div>
+      </div>
+    `;
+  } else {
+    itemsHtml = `<div style="color:#999;font-size:11px">ยังไม่มีรายการสินค้า</div>`;
+  }
+
+  const infoHtml = info.map(([l, v]) => `
+    <div><div class="label">${l}</div><div class="value">${v || '-'}</div></div>
+  `).join('');
+
+  return `
+    <div class="pr-shipment">
+      <div class="pr-shipment-head">
+        <span class="pr-shipment-id">${escapeHtml(s.id)}</span>
+        <span class="pr-shipment-status">${escapeHtml(statusLabel)}${s.confirmed ? ' ✓ รับแล้ว' : ''}</span>
+      </div>
+      <div class="pr-info-grid">${infoHtml}</div>
+      ${itemsHtml}
+      ${costsHtml}
+      ${totalsHtml}
+    </div>
+  `;
+}
+
+function printShipmentReport() {
+  const all = loadShipments().slice().sort((a,b) => b.id.localeCompare(a.id));
+  const filtered = state.filter === 'all' ? all
+    : state.filter === 'pending' ? all.filter(s => !s.confirmed)
+    : state.filter === 'transit' ? all.filter(s => ['shipped','transit','arrived'].includes(computeStatus(s)))
+    : state.filter === 'done' ? all.filter(s => s.confirmed)
+    : all;
+
+  if (filtered.length === 0) { toast('ไม่มี Shipment ที่จะพิมพ์', 'error'); return; }
+
+  const filterLabel = {all:'ทั้งหมด', pending:'ยังไม่เสร็จ', transit:'กำลังขนส่ง', done:'เสร็จสิ้น'}[state.filter] || 'ทั้งหมด';
+
+  // รวมยอดทั้ง report
+  let grandProduct = 0, grandExtra = 0, grandTotal = 0, grandPieces = 0;
+  filtered.forEach(s => {
+    const c = calcCosts(s);
+    if (c) {
+      grandProduct += c.totalProduct;
+      grandExtra   += c.totalExtra;
+      grandTotal   += c.grandTotal;
+      grandPieces  += c.totalPieces;
+    }
+  });
+
+  const sections = filtered.map(buildShipmentReportSection).join('');
+
+  document.getElementById('print-report').innerHTML = `
+    <div class="pr-header">
+      <div class="pr-title">รายงาน Shipment นำเข้าจากจีน</div>
+      <div class="pr-meta">พิมพ์เมื่อ ${fmtNow()} · ตัวกรอง: ${filterLabel} · ${filtered.length} รายการ</div>
+    </div>
+    <div class="pr-summary-box">
+      <div style="font-weight:700;margin-bottom:6px">สรุปภาพรวม</div>
+      <div class="pr-info-grid" style="grid-template-columns:repeat(4,1fr)">
+        <div><div class="label">จำนวน Shipment</div><div class="value">${filtered.length}</div></div>
+        <div><div class="label">รวมชิ้นทั้งหมด</div><div class="value">${fmtNum(grandPieces)}</div></div>
+        <div><div class="label">ค่าสินค้ารวม</div><div class="value">${fmtBaht(grandProduct, 2)} ฿</div></div>
+        <div><div class="label">ค่าขนส่ง+อื่นๆ รวม</div><div class="value">${fmtBaht(grandExtra, 2)} ฿</div></div>
+      </div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid #ccc;font-weight:700;display:flex;justify-content:space-between">
+        <span>ต้นทุนรวมทั้งหมด</span><span>${fmtBaht(grandTotal, 2)} ฿</span>
+      </div>
+    </div>
+    ${sections}
+    <div class="pr-footer">— สิ้นสุดรายงาน —</div>
+  `;
+  // รอให้ DOM อัปเดตก่อนเปิด print dialog
+  setTimeout(() => window.print(), 50);
+}
+
+function buildCardReportRow(c, idx) {
+  const t = cardTotals(c);
+  const rowFor = (label, st) => {
+    if (st.count === 0 && st.free === 0) return '';
+    return `
+      <tr>
+        <td>${label}</td>
+        <td class="num">${fmtNum(st.count)}</td>
+        <td class="num">${st.free > 0 ? fmtNum(st.free) : '-'}</td>
+        <td class="num">${fmtNum(st.totalCards)}</td>
+        <td class="num">${fmtBaht(st.priceYuan, 2)}</td>
+        <td class="num">${fmtBaht(st.grossYuan, 2)}</td>
+        <td class="num">${fmtBaht(st.grossBaht, 2)}</td>
+        <td class="num"><strong>${st.totalCards > 0 ? fmtBaht(st.costPerCard, 2) : '-'}</strong></td>
+      </tr>
+    `;
+  };
+  return `
+    <div class="pr-shipment">
+      <div class="pr-shipment-head">
+        <span class="pr-shipment-id">${idx + 1}. ${escapeHtml(c.id)}</span>
+        <span class="pr-shipment-status">📅 ${fmtDate(c.payDate)} · ¥1 = ${fmtBaht(t.exchangeRate, 4)} ฿</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ประเภท</th>
+            <th class="num">ซื้อ</th>
+            <th class="num">แถม</th>
+            <th class="num">รวม</th>
+            <th class="num">¥/ใบ</th>
+            <th class="num">รวม ¥</th>
+            <th class="num">รวม ฿</th>
+            <th class="num">฿/ใบ</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowFor('รายปี', t.annual)}
+          ${rowFor('ตลอดชีพ', t.lifetime)}
+        </tbody>
+      </table>
+      <div class="pr-totals" style="margin-top:6px">
+        <div class="row total"><span>รวมจ่ายครั้งนี้</span><span>${fmtBaht(t.grossBaht, 2)} ฿ (${fmtBaht(t.grossYuan, 2)} ¥)</span></div>
+      </div>
+    </div>
+  `;
+}
+
+function printCardReport() {
+  const all = loadCards().map(normalizeCard).slice().sort((a,b) => {
+    const da = a.payDate || a.createdAt || '';
+    const db = b.payDate || b.createdAt || '';
+    return db.localeCompare(da);
+  });
+
+  if (all.length === 0) { toast('ไม่มีรายการ Card ที่จะพิมพ์', 'error'); return; }
+
+  const grand = all.reduce((acc, c) => {
+    const t = cardTotals(c);
+    acc.grossYuan += t.grossYuan;
+    acc.grossBaht += t.grossBaht;
+    acc.annualCards   += t.annual.totalCards;
+    acc.lifetimeCards += t.lifetime.totalCards;
+    acc.annualSpend   += t.annual.grossBaht;
+    acc.lifetimeSpend += t.lifetime.grossBaht;
+    acc.annualBought   += t.annual.count;
+    acc.lifetimeBought += t.lifetime.count;
+    acc.annualFree   += t.annual.free;
+    acc.lifetimeFree += t.lifetime.free;
+    return acc;
+  }, { grossYuan: 0, grossBaht: 0, annualCards: 0, lifetimeCards: 0, annualSpend: 0, lifetimeSpend: 0, annualBought: 0, lifetimeBought: 0, annualFree: 0, lifetimeFree: 0 });
+
+  const avgAnnual   = grand.annualCards   > 0 ? grand.annualSpend   / grand.annualCards   : 0;
+  const avgLifetime = grand.lifetimeCards > 0 ? grand.lifetimeSpend / grand.lifetimeCards : 0;
+
+  const sections = all.map((c, i) => buildCardReportRow(c, i)).join('');
+
+  document.getElementById('print-report').innerHTML = `
+    <div class="pr-header">
+      <div class="pr-title">รายงาน Card บริการ</div>
+      <div class="pr-meta">พิมพ์เมื่อ ${fmtNow()} · ${all.length} รายการ</div>
+    </div>
+    <div class="pr-summary-box">
+      <div style="font-weight:700;margin-bottom:6px">สรุปภาพรวมทั้งหมด</div>
+      <table>
+        <thead>
+          <tr>
+            <th>ประเภท</th>
+            <th class="num">ซื้อ</th>
+            <th class="num">แถม</th>
+            <th class="num">รวม (ใบ)</th>
+            <th class="num">ยอดจ่าย (฿)</th>
+            <th class="num">เฉลี่ย ฿/ใบ</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>รายปี</td>
+            <td class="num">${fmtNum(grand.annualBought)}</td>
+            <td class="num">${fmtNum(grand.annualFree)}</td>
+            <td class="num">${fmtNum(grand.annualCards)}</td>
+            <td class="num">${fmtBaht(grand.annualSpend, 2)}</td>
+            <td class="num"><strong>${avgAnnual > 0 ? fmtBaht(avgAnnual, 2) : '-'}</strong></td>
+          </tr>
+          <tr>
+            <td>ตลอดชีพ</td>
+            <td class="num">${fmtNum(grand.lifetimeBought)}</td>
+            <td class="num">${fmtNum(grand.lifetimeFree)}</td>
+            <td class="num">${fmtNum(grand.lifetimeCards)}</td>
+            <td class="num">${fmtBaht(grand.lifetimeSpend, 2)}</td>
+            <td class="num"><strong>${avgLifetime > 0 ? fmtBaht(avgLifetime, 2) : '-'}</strong></td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid #ccc;font-weight:700;display:flex;justify-content:space-between">
+        <span>ยอดจ่ายรวมทั้งหมด</span>
+        <span>${fmtBaht(grand.grossBaht, 2)} ฿ (${fmtBaht(grand.grossYuan, 2)} ¥)</span>
+      </div>
+    </div>
+    <div class="pr-section-title" style="font-size:13px;margin-top:14px">รายละเอียดแต่ละการซื้อ</div>
+    ${sections}
+    <div class="pr-footer">— สิ้นสุดรายงาน —</div>
+  `;
+  setTimeout(() => window.print(), 50);
+}
+
 /* ============ Init ============ */
 window.addEventListener('DOMContentLoaded', async () => {
   setSyncStatus();
@@ -2921,6 +3292,8 @@ window.recalcCardTotals = recalcCardTotals;
 window.confirmDeleteCard = confirmDeleteCard;
 window.uploadCardPhotos = uploadCardPhotos;
 window.removeCardPhoto = removeCardPhoto;
+window.printShipmentReport = printShipmentReport;
+window.printCardReport = printCardReport;
 </script>
 </body>
 </html>
