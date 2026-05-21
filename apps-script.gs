@@ -121,7 +121,10 @@ const CARD_COLS = [
   'photos_json',
   // ===== fields ใหม่ — ต่อท้ายเท่านั้น =====
   'annual_count', 'annual_price', 'annual_free',
-  'lifetime_count', 'lifetime_price', 'lifetime_free'
+  'lifetime_count', 'lifetime_price', 'lifetime_free',
+  // annual_price/lifetime_price ตอนนี้คือ "ราคาต่อใบ (¥)" — ต้องคูณ exchange_rate ถึงได้บาท
+  // exchange_rate = 0/null สำหรับการ์ดเก่า (ราคาต่อใบเป็นบาทอยู่แล้ว) — frontend treat 0 → 1
+  'exchange_rate'
 ];
 
 /* ================ Web app entry points ================ */
@@ -774,6 +777,7 @@ function listCards() {
       createdAt: toIso(r[ix('createdAt')]),
       updatedAt: toIso(r[ix('updatedAt')]),
       payDate: toIso(r[ix('payDate')]),
+      exchangeRate: num(r[ix('exchange_rate')]),
       annual: annual,
       lifetime: lifetime,
       photos: Array.isArray(photos) ? photos : []
@@ -813,6 +817,7 @@ function upsertCard(payload) {
     set('lifetime_count', Number(l.count) || 0);
     set('lifetime_price', Number(l.pricePerCard) || 0);
     set('lifetime_free',  Number(l.freeCount) || 0);
+    set('exchange_rate',  Number(c.exchangeRate) || 0);
 
     const lastRow = sheet.getLastRow();
     let foundIdx = -1;

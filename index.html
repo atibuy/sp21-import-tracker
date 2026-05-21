@@ -2541,7 +2541,7 @@ function renderCardPhotosViewer(card) {
   }).join('');
 }
 
-// แปลง shape เก่า (cardType + cardCount + pricePerCard) → ใหม่ (annual + lifetime + freeCount)
+// แปลง shape เก่า → ใหม่ (รองรับ legacy ทั้ง 2 ระดับ: cardType และ pricePerCard เป็นบาท)
 function normalizeCard(c) {
   if (!c) return c;
   if (!c.annual)   c.annual   = { count: 0, pricePerCard: 0, freeCount: 0 };
@@ -2557,25 +2557,37 @@ function normalizeCard(c) {
     c[k].pricePerCard = Number(c[k].pricePerCard) || 0;
     c[k].freeCount    = Number(c[k].freeCount) || 0;
   });
+  // exchangeRate: 0/null/undefined → 1 เพื่อให้การ์ดเก่า (price เป็นบาทอยู่แล้ว) แสดงยอดเดิม
+  c.exchangeRate = Number(c.exchangeRate) || 0;
+  if (c.exchangeRate <= 0) c.exchangeRate = 1;
   // ทิ้ง legacy field — clear เพื่อไม่ให้ไป confuse readers
   delete c.cardType; delete c.cardCount; delete c.pricePerCard;
   return c;
 }
 
-// คำนวณยอดรวม + ต้นทุนต่อใบ (หาร "จำนวนซื้อ + จำนวนแถม") ต่อประเภท
-function cardTypeStats(t) {
+// ราคาต่อใบในแต่ละประเภทตอนนี้คือ "หยวน"  ใช้ rate แปลงเป็นบาท
+function cardTypeStats(t, rate) {
   const count = Number(t?.count) || 0;
-  const price = Number(t?.pricePerCard) || 0;
+  const priceYuan = Number(t?.pricePerCard) || 0;
   const free  = Number(t?.freeCount) || 0;
-  const gross = count * price;
+  const r = Number(rate) || 0;
+  const grossYuan = count * priceYuan;
+  const grossBaht = grossYuan * r;
   const totalCards = count + free;
-  const costPerCard = totalCards > 0 ? gross / totalCards : 0;
-  return { count, price, free, gross, totalCards, costPerCard };
+  const costPerCard = totalCards > 0 ? grossBaht / totalCards : 0;   // ต้นทุนต่อใบ (฿)
+  return { count, priceYuan, free, grossYuan, grossBaht, totalCards, costPerCard };
 }
 function cardTotals(c) {
-  const a = cardTypeStats(c?.annual);
-  const l = cardTypeStats(c?.lifetime);
-  return { annual: a, lifetime: l, gross: a.gross + l.gross, totalCards: a.totalCards + l.totalCards };
+  const rate = Number(c?.exchangeRate) || 0;
+  const a = cardTypeStats(c?.annual, rate);
+  const l = cardTypeStats(c?.lifetime, rate);
+  return {
+    annual: a, lifetime: l,
+    exchangeRate: rate,
+    grossYuan: a.grossYuan + l.grossYuan,
+    grossBaht: a.grossBaht + l.grossBaht,
+    totalCards: a.totalCards + l.totalCards
+  };
 }
 
 function renderCardList() {
@@ -2588,15 +2600,16 @@ function renderCardList() {
 
   const totals = all.reduce((acc, c) => {
     const t = cardTotals(c);
-    acc.gross += t.gross;
+    acc.grossYuan += t.grossYuan;
+    acc.grossBaht += t.grossBaht;
     acc.annualCards   += t.annual.totalCards;
     acc.lifetimeCards += t.lifetime.totalCards;
-    acc.annualSpend   += t.annual.gross;
-    acc.lifetimeSpend += t.lifetime.gross;
+    acc.annualSpendBaht   += t.annual.grossBaht;
+    acc.lifetimeSpendBaht += t.lifetime.grossBaht;
     return acc;
-  }, { gross: 0, annualCards: 0, lifetimeCards: 0, annualSpend: 0, lifetimeSpend: 0 });
-  const avgAnnual   = totals.annualCards   > 0 ? totals.annualSpend   / totals.annualCards   : 0;
-  const avgLifetime = totals.lifetimeCards > 0 ? totals.lifetimeSpend / totals.lifetimeCards : 0;
+  }, { grossYuan: 0, grossBaht: 0, annualCards: 0, lifetimeCards: 0, annualSpendBaht: 0, lifetimeSpendBaht: 0 });
+  const avgAnnual   = totals.annualCards   > 0 ? totals.annualSpendBaht   / totals.annualCards   : 0;
+  const avgLifetime = totals.lifetimeCards > 0 ? totals.lifetimeSpendBaht / totals.lifetimeCards : 0;
 
   let listHtml;
   if (all.length === 0) {
@@ -2628,12 +2641,15 @@ function renderCardList() {
             <div class="id">${escapeHtml(c.id)}</div>
             <div style="display:flex;gap:6px">${typeBadges.join('')}</div>
           </div>
-          <div class="meta"><span>📅 ${fmtDate(c.payDate)}</span></div>
+          <div class="meta">
+            <span>📅 ${fmtDate(c.payDate)}</span>
+            <span>💱 ¥1 = ${fmtBaht(t.exchangeRate, 4)} ฿</span>
+          </div>
           <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)">
             ${breakdownRows.join('')}
           </div>
           <div class="footer">
-            <span class="total">รวมจ่าย <strong>${fmtBaht(t.gross, 2)} ฿</strong></span>
+            <span class="total">รวมจ่าย <strong>${fmtBaht(t.grossBaht, 2)} ฿</strong> <span style="color:var(--text-muted);font-weight:400">(${fmtBaht(t.grossYuan, 2)} ¥)</span></span>
             <span style="color:var(--text-muted);font-size:13px">${(c.photos||[]).length} หลักฐาน</span>
           </div>
         </div>
@@ -2644,7 +2660,11 @@ function renderCardList() {
   document.getElementById('main').innerHTML = `
     <div class="summary-grid">
       <div class="summary-card"><div class="label">รายการทั้งหมด</div><div class="value">${all.length}</div></div>
-      <div class="summary-card purple"><div class="label">ยอดซื้อรวม</div><div class="value" style="font-size:18px">${fmtBaht(totals.gross, 2)} ฿</div></div>
+      <div class="summary-card purple">
+        <div class="label">ยอดซื้อรวม</div>
+        <div class="value" style="font-size:18px">${fmtBaht(totals.grossBaht, 2)} ฿</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">(${fmtBaht(totals.grossYuan, 2)} ¥)</div>
+      </div>
       <div class="summary-card orange"><div class="label">รายปี · ทุน/ใบ</div><div class="value" style="font-size:18px">${avgAnnual > 0 ? fmtBaht(avgAnnual, 2) : '-'} ฿</div></div>
       <div class="summary-card green"><div class="label">ตลอดชีพ · ทุน/ใบ</div><div class="value" style="font-size:18px">${avgLifetime > 0 ? fmtBaht(avgLifetime, 2) : '-'} ฿</div></div>
     </div>
@@ -2664,12 +2684,16 @@ function openCard(id) {
 function newCard() {
   state.currentCardId = nextCardId();
   // สร้าง shell card ใน local ก่อน เพื่อให้ uploadCardPhoto อ้างถึงได้
+  // exchangeRate ใส่ค่า last-used ของการ์ดล่าสุด เพื่อ UX สะดวก (override ได้)
+  const recent = loadCards().map(normalizeCard).sort((a,b) => (b.payDate||'').localeCompare(a.payDate||''))[0];
+  const defaultRate = recent && recent.exchangeRate > 0 ? recent.exchangeRate : 5;
   const now = new Date().toISOString();
   const shell = {
     id: state.currentCardId,
     createdAt: now,
     updatedAt: now,
     payDate: todayISO(),
+    exchangeRate: defaultRate,
     annual:   { count: 0, pricePerCard: 0, freeCount: 0 },
     lifetime: { count: 0, pricePerCard: 0, freeCount: 0 },
     photos: []
@@ -2679,13 +2703,15 @@ function newCard() {
   render();
 }
 
-function renderCardTypeBlock(label, prefix, data) {
+function renderCardTypeBlock(label, prefix, data, rate) {
   const count = Number(data?.count) || 0;
-  const price = Number(data?.pricePerCard) || 0;
+  const priceYuan = Number(data?.pricePerCard) || 0;
   const free  = Number(data?.freeCount) || 0;
-  const gross = count * price;
+  const r = Number(rate) || 0;
+  const grossYuan = count * priceYuan;
+  const grossBaht = grossYuan * r;
   const total = count + free;
-  const cpc = total > 0 ? gross / total : 0;
+  const cpcBaht = total > 0 ? grossBaht / total : 0;
   return `
     <div class="form-section">
       <h3>${label}</h3>
@@ -2695,8 +2721,8 @@ function renderCardTypeBlock(label, prefix, data) {
           <input type="number" id="card-${prefix}-count" min="0" inputmode="numeric" value="${count || ''}" oninput="recalcCardTotals()">
         </div>
         <div class="field">
-          <label>ราคาต่อใบ (฿)</label>
-          <input type="number" id="card-${prefix}-price" min="0" step="0.01" inputmode="decimal" value="${price || ''}" oninput="recalcCardTotals()">
+          <label>ราคาต่อใบ (¥)</label>
+          <input type="number" id="card-${prefix}-price" min="0" step="0.01" inputmode="decimal" value="${priceYuan || ''}" oninput="recalcCardTotals()">
         </div>
       </div>
       <div class="field">
@@ -2706,16 +2732,20 @@ function renderCardTypeBlock(label, prefix, data) {
       </div>
       <div style="background:var(--bg);border-radius:var(--radius-sm);padding:10px 12px;display:flex;flex-direction:column;gap:4px">
         <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text-secondary)">
-          <span>ราคารวม</span>
-          <span id="card-${prefix}-gross">${fmtBaht(gross, 2)} ฿</span>
+          <span>ราคารวม (¥)</span>
+          <span id="card-${prefix}-grossYuan">${fmtBaht(grossYuan, 2)} ¥</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text-secondary)">
+          <span>ราคารวม (฿)</span>
+          <span id="card-${prefix}-grossBaht">${fmtBaht(grossBaht, 2)} ฿</span>
         </div>
         <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text-secondary)">
           <span>จำนวนทั้งหมด (รวมแถม)</span>
           <span id="card-${prefix}-total">${fmtNum(total)} ใบ</span>
         </div>
         <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:var(--primary);border-top:1px solid var(--border);padding-top:6px;margin-top:2px">
-          <span>ต้นทุนต่อใบ</span>
-          <span id="card-${prefix}-cpc">${total > 0 ? fmtBaht(cpc, 2) + ' ฿' : '-'}</span>
+          <span>ต้นทุนต่อใบ (฿)</span>
+          <span id="card-${prefix}-cpc">${total > 0 ? fmtBaht(cpcBaht, 2) + ' ฿' : '-'}</span>
         </div>
       </div>
     </div>
@@ -2733,20 +2763,27 @@ function renderCardForm(id) {
   document.getElementById('main').innerHTML = `
     <div class="form-section">
       <h3>💳 ข้อมูลการซื้อ</h3>
-      <div class="field">
-        <label>วันที่จ่ายเงิน <span class="req">*</span></label>
-        <input type="date" id="card-payDate" value="${escapeHtml(c.payDate || todayISO())}">
+      <div class="field-grid">
+        <div class="field">
+          <label>วันที่จ่ายเงิน <span class="req">*</span></label>
+          <input type="date" id="card-payDate" value="${escapeHtml(c.payDate || todayISO())}">
+        </div>
+        <div class="field">
+          <label>เรท (¥1 = ? ฿) <span class="req">*</span></label>
+          <input type="number" id="card-rate" min="0" step="0.0001" inputmode="decimal" value="${c.exchangeRate || ''}" oninput="recalcCardTotals()">
+        </div>
       </div>
     </div>
 
-    ${renderCardTypeBlock('📅 รายปี', 'annual', c.annual)}
-    ${renderCardTypeBlock('♾️ ตลอดชีพ', 'lifetime', c.lifetime)}
+    ${renderCardTypeBlock('📅 รายปี', 'annual', c.annual, c.exchangeRate)}
+    ${renderCardTypeBlock('♾️ ตลอดชีพ', 'lifetime', c.lifetime, c.exchangeRate)}
 
     <div class="cost-summary">
       <h3>สรุปการซื้อครั้งนี้</h3>
       <div class="cost-row"><span>รายปี (รวมแถม)</span><span id="sum-annual-total">${fmtNum(grand.annual.totalCards)} ใบ</span></div>
       <div class="cost-row"><span>ตลอดชีพ (รวมแถม)</span><span id="sum-lifetime-total">${fmtNum(grand.lifetime.totalCards)} ใบ</span></div>
-      <div class="cost-row divider total"><span>รวมจ่ายทั้งสิ้น</span><span id="sum-gross">${fmtBaht(grand.gross, 2)} ฿</span></div>
+      <div class="cost-row divider"><span>รวมจ่าย (¥)</span><span id="sum-grossYuan">${fmtBaht(grand.grossYuan, 2)} ¥</span></div>
+      <div class="cost-row total"><span>รวมจ่าย (฿)</span><span id="sum-grossBaht">${fmtBaht(grand.grossBaht, 2)} ฿</span></div>
     </div>
 
     <div class="form-section">
@@ -2768,43 +2805,52 @@ function readCardTypeInputs(prefix) {
 }
 
 function recalcCardTotals() {
-  let grandGross = 0;
+  const rate = Number(document.getElementById('card-rate')?.value) || 0;
+  let grandYuan = 0, grandBaht = 0;
   ['annual', 'lifetime'].forEach(prefix => {
     const { count, pricePerCard, freeCount } = readCardTypeInputs(prefix);
-    const gross = count * pricePerCard;
+    const grossYuan = count * pricePerCard;
+    const grossBaht = grossYuan * rate;
     const total = count + freeCount;
-    const cpc = total > 0 ? gross / total : 0;
-    grandGross += gross;
-    const g = document.getElementById(`card-${prefix}-gross`);
-    const t = document.getElementById(`card-${prefix}-total`);
-    const c = document.getElementById(`card-${prefix}-cpc`);
+    const cpcBaht = total > 0 ? grossBaht / total : 0;
+    grandYuan += grossYuan;
+    grandBaht += grossBaht;
+    const gy = document.getElementById(`card-${prefix}-grossYuan`);
+    const gb = document.getElementById(`card-${prefix}-grossBaht`);
+    const tt = document.getElementById(`card-${prefix}-total`);
+    const cp = document.getElementById(`card-${prefix}-cpc`);
     const st = document.getElementById(`sum-${prefix}-total`);
-    if (g) g.textContent = fmtBaht(gross, 2) + ' ฿';
-    if (t) t.textContent = fmtNum(total) + ' ใบ';
-    if (c) c.textContent = total > 0 ? fmtBaht(cpc, 2) + ' ฿' : '-';
+    if (gy) gy.textContent = fmtBaht(grossYuan, 2) + ' ¥';
+    if (gb) gb.textContent = fmtBaht(grossBaht, 2) + ' ฿';
+    if (tt) tt.textContent = fmtNum(total) + ' ใบ';
+    if (cp) cp.textContent = total > 0 ? fmtBaht(cpcBaht, 2) + ' ฿' : '-';
     if (st) st.textContent = fmtNum(total) + ' ใบ';
   });
-  const sg = document.getElementById('sum-gross');
-  if (sg) sg.textContent = fmtBaht(grandGross, 2) + ' ฿';
+  const sy = document.getElementById('sum-grossYuan');
+  const sb = document.getElementById('sum-grossBaht');
+  if (sy) sy.textContent = fmtBaht(grandYuan, 2) + ' ¥';
+  if (sb) sb.textContent = fmtBaht(grandBaht, 2) + ' ฿';
 }
 
 function saveCard() {
   const c = getCard(state.currentCardId);
   if (!c) { toast('ไม่พบ Card', 'error'); return; }
   const payDate = document.getElementById('card-payDate').value;
+  const exchangeRate = Number(document.getElementById('card-rate').value) || 0;
   if (!payDate) { toast('ระบุวันที่จ่ายเงิน', 'error'); return; }
+  if (exchangeRate <= 0) { toast('ระบุเรทแลกเปลี่ยน (¥1 = ? ฿)', 'error'); return; }
   const annual   = readCardTypeInputs('annual');
   const lifetime = readCardTypeInputs('lifetime');
   if (annual.count <= 0 && lifetime.count <= 0) {
     toast('ระบุจำนวนที่ซื้ออย่างน้อย 1 ประเภท', 'error'); return;
   }
-  // validation: ประเภทใดที่กรอก count → ต้องกรอก price ด้วย
-  if (annual.count > 0   && annual.pricePerCard   <= 0) { toast('ระบุราคาต่อใบของรายปี', 'error'); return; }
-  if (lifetime.count > 0 && lifetime.pricePerCard <= 0) { toast('ระบุราคาต่อใบของตลอดชีพ', 'error'); return; }
+  // ประเภทใดที่กรอก count → ต้องกรอกราคาหยวนด้วย
+  if (annual.count > 0   && annual.pricePerCard   <= 0) { toast('ระบุราคาต่อใบ (¥) ของรายปี', 'error'); return; }
+  if (lifetime.count > 0 && lifetime.pricePerCard <= 0) { toast('ระบุราคาต่อใบ (¥) ของตลอดชีพ', 'error'); return; }
 
   const photos = collectCardPhotos();
   const updated = Object.assign({}, c, {
-    payDate, annual, lifetime, photos,
+    payDate, exchangeRate, annual, lifetime, photos,
     updatedAt: new Date().toISOString()
   });
   delete updated.cardType; delete updated.cardCount; delete updated.pricePerCard;
