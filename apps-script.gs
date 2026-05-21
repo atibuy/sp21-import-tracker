@@ -111,12 +111,17 @@ const PHOTO_DATA_COLS = [
   'fileId', 'chunkIdx', 'totalChunks', 'dataChunk'
 ];
 
-// แต่ละ row = Card-purchase 1 รายการ
+// แต่ละ row = Card-purchase 1 รายการ — 1 การซื้อมีได้ทั้ง รายปี + ตลอดชีพ พร้อมกัน
 // photos_json เก็บ array ของ {fileId,url,viewUrl,thumbUrl,name,uploadedAt,mimeType,category}
+// IMPORTANT: append-only — คอลัมน์เก่า cardType/cardCount/pricePerCard ยังอยู่
+// เพื่อ backward-compat กับข้อมูลเก่า  ไม่ใช้แล้วในการเขียน
 const CARD_COLS = [
   'id', 'createdAt', 'updatedAt',
   'payDate', 'cardType', 'cardCount', 'pricePerCard',
-  'photos_json'
+  'photos_json',
+  // ===== fields ใหม่ — ต่อท้ายเท่านั้น =====
+  'annual_count', 'annual_price', 'annual_free',
+  'lifetime_count', 'lifetime_price', 'lifetime_free'
 ];
 
 /* ================ Web app entry points ================ */
@@ -743,18 +748,34 @@ function listCards() {
   const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, CARD_COLS.length).getValues();
   const ix = function (name) { return CARD_COLS.indexOf(name); };
   const toIso = function (v) { return v instanceof Date ? v.toISOString() : (v || null); };
+  const num = function (v) { return Number(v) || 0; };
   return rows.map(function (r) {
     let photos = [];
     const raw = r[ix('photos_json')];
     if (raw) { try { photos = JSON.parse(raw) || []; } catch (e) { photos = []; } }
+
+    // ค่าใหม่ (annual_/lifetime_) — ถ้ามีคอลัมน์ใดมีค่า > 0 ถือเป็น new shape
+    let annual   = { count: num(r[ix('annual_count')]),   pricePerCard: num(r[ix('annual_price')]),   freeCount: num(r[ix('annual_free')])   };
+    let lifetime = { count: num(r[ix('lifetime_count')]), pricePerCard: num(r[ix('lifetime_price')]), freeCount: num(r[ix('lifetime_free')]) };
+
+    // legacy fallback — ถ้า new cols ว่างหมดแต่มี cardType/cardCount เก่า → กระจายไปยังประเภทที่ตรง
+    if (annual.count === 0 && lifetime.count === 0 && annual.pricePerCard === 0 && lifetime.pricePerCard === 0) {
+      const legacyType = String(r[ix('cardType')] || '');
+      const legacyCount = num(r[ix('cardCount')]);
+      const legacyPrice = num(r[ix('pricePerCard')]);
+      if (legacyCount > 0 || legacyPrice > 0) {
+        const seed = { count: legacyCount, pricePerCard: legacyPrice, freeCount: 0 };
+        if (legacyType === 'lifetime') lifetime = seed; else annual = seed;
+      }
+    }
+
     return {
       id: String(r[ix('id')] || ''),
       createdAt: toIso(r[ix('createdAt')]),
       updatedAt: toIso(r[ix('updatedAt')]),
       payDate: toIso(r[ix('payDate')]),
-      cardType: r[ix('cardType')] || '',
-      cardCount: Number(r[ix('cardCount')]) || 0,
-      pricePerCard: Number(r[ix('pricePerCard')]) || 0,
+      annual: annual,
+      lifetime: lifetime,
       photos: Array.isArray(photos) ? photos : []
     };
   });
@@ -778,11 +799,20 @@ function upsertCard(payload) {
     set('createdAt', c.createdAt || '');
     set('updatedAt', c.updatedAt || new Date().toISOString());
     set('payDate', c.payDate || '');
-    set('cardType', c.cardType || '');
-    set('cardCount', Number(c.cardCount) || 0);
-    set('pricePerCard', Number(c.pricePerCard) || 0);
+    // legacy fields — เคลียร์ทิ้ง  ใช้ annual_/lifetime_ แทน
+    set('cardType', '');
+    set('cardCount', 0);
+    set('pricePerCard', 0);
     const photos = Array.isArray(c.photos) ? c.photos.filter(function (p) { return p && p.fileId; }) : [];
     set('photos_json', JSON.stringify(photos));
+    const a = c.annual || {};
+    const l = c.lifetime || {};
+    set('annual_count',   Number(a.count) || 0);
+    set('annual_price',   Number(a.pricePerCard) || 0);
+    set('annual_free',    Number(a.freeCount) || 0);
+    set('lifetime_count', Number(l.count) || 0);
+    set('lifetime_price', Number(l.pricePerCard) || 0);
+    set('lifetime_free',  Number(l.freeCount) || 0);
 
     const lastRow = sheet.getLastRow();
     let foundIdx = -1;

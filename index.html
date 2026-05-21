@@ -2541,39 +2541,99 @@ function renderCardPhotosViewer(card) {
   }).join('');
 }
 
+// แปลง shape เก่า (cardType + cardCount + pricePerCard) → ใหม่ (annual + lifetime + freeCount)
+function normalizeCard(c) {
+  if (!c) return c;
+  if (!c.annual)   c.annual   = { count: 0, pricePerCard: 0, freeCount: 0 };
+  if (!c.lifetime) c.lifetime = { count: 0, pricePerCard: 0, freeCount: 0 };
+  // legacy migration: ถ้า annual/lifetime ทั้งคู่ว่าง แต่มี cardType/cardCount เก่า → กระจาย
+  const empty = (t) => (Number(t.count) || 0) === 0 && (Number(t.pricePerCard) || 0) === 0;
+  if (empty(c.annual) && empty(c.lifetime) && c.cardType && (Number(c.cardCount) || Number(c.pricePerCard))) {
+    const seed = { count: Number(c.cardCount) || 0, pricePerCard: Number(c.pricePerCard) || 0, freeCount: 0 };
+    if (c.cardType === 'lifetime') c.lifetime = seed; else c.annual = seed;
+  }
+  ['annual', 'lifetime'].forEach(k => {
+    c[k].count        = Number(c[k].count) || 0;
+    c[k].pricePerCard = Number(c[k].pricePerCard) || 0;
+    c[k].freeCount    = Number(c[k].freeCount) || 0;
+  });
+  // ทิ้ง legacy field — clear เพื่อไม่ให้ไป confuse readers
+  delete c.cardType; delete c.cardCount; delete c.pricePerCard;
+  return c;
+}
+
+// คำนวณยอดรวม + ต้นทุนต่อใบ (หาร "จำนวนซื้อ + จำนวนแถม") ต่อประเภท
+function cardTypeStats(t) {
+  const count = Number(t?.count) || 0;
+  const price = Number(t?.pricePerCard) || 0;
+  const free  = Number(t?.freeCount) || 0;
+  const gross = count * price;
+  const totalCards = count + free;
+  const costPerCard = totalCards > 0 ? gross / totalCards : 0;
+  return { count, price, free, gross, totalCards, costPerCard };
+}
+function cardTotals(c) {
+  const a = cardTypeStats(c?.annual);
+  const l = cardTypeStats(c?.lifetime);
+  return { annual: a, lifetime: l, gross: a.gross + l.gross, totalCards: a.totalCards + l.totalCards };
+}
+
 function renderCardList() {
   renderTopbar('Card บริการ', false);
-  const all = loadCards().slice().sort((a,b) => {
+  const all = loadCards().map(normalizeCard).slice().sort((a,b) => {
     const da = a.payDate || a.createdAt || '';
     const db = b.payDate || b.createdAt || '';
     return db.localeCompare(da);
   });
 
-  const totalCards = all.reduce((s, c) => s + (Number(c.cardCount) || 0), 0);
-  const totalSpend = all.reduce((s, c) => s + (Number(c.cardCount) || 0) * (Number(c.pricePerCard) || 0), 0);
-  const annualCount = all.filter(c => c.cardType === 'annual').length;
-  const lifetimeCount = all.filter(c => c.cardType === 'lifetime').length;
+  const totals = all.reduce((acc, c) => {
+    const t = cardTotals(c);
+    acc.gross += t.gross;
+    acc.annualCards   += t.annual.totalCards;
+    acc.lifetimeCards += t.lifetime.totalCards;
+    acc.annualSpend   += t.annual.gross;
+    acc.lifetimeSpend += t.lifetime.gross;
+    return acc;
+  }, { gross: 0, annualCards: 0, lifetimeCards: 0, annualSpend: 0, lifetimeSpend: 0 });
+  const avgAnnual   = totals.annualCards   > 0 ? totals.annualSpend   / totals.annualCards   : 0;
+  const avgLifetime = totals.lifetimeCards > 0 ? totals.lifetimeSpend / totals.lifetimeCards : 0;
 
   let listHtml;
   if (all.length === 0) {
     listHtml = `<div class="empty"><div class="icon">💳</div><p>ยังไม่มีรายการซื้อ Card<br>กดปุ่มด้านล่างเพื่อบันทึก</p></div>`;
   } else {
     listHtml = all.map(c => {
-      const total = (Number(c.cardCount) || 0) * (Number(c.pricePerCard) || 0);
-      const typeLabel = CARD_TYPE_LABEL[c.cardType] || '-';
+      const t = cardTotals(c);
+      const typeBadges = [];
+      if (t.annual.totalCards   > 0) typeBadges.push(`<span class="badge">รายปี</span>`);
+      if (t.lifetime.totalCards > 0) typeBadges.push(`<span class="badge" style="background:#ede9fe;color:var(--purple)">ตลอดชีพ</span>`);
+      const breakdownRows = [];
+      if (t.annual.count > 0 || t.annual.free > 0) {
+        breakdownRows.push(`
+          <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text-secondary);padding:3px 0">
+            <span>รายปี: ${fmtNum(t.annual.count)}${t.annual.free?` + แถม ${fmtNum(t.annual.free)}`:''} ใบ</span>
+            <span><strong style="color:var(--text)">${fmtBaht(t.annual.costPerCard, 2)} ฿/ใบ</strong></span>
+          </div>`);
+      }
+      if (t.lifetime.count > 0 || t.lifetime.free > 0) {
+        breakdownRows.push(`
+          <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text-secondary);padding:3px 0">
+            <span>ตลอดชีพ: ${fmtNum(t.lifetime.count)}${t.lifetime.free?` + แถม ${fmtNum(t.lifetime.free)}`:''} ใบ</span>
+            <span><strong style="color:var(--text)">${fmtBaht(t.lifetime.costPerCard, 2)} ฿/ใบ</strong></span>
+          </div>`);
+      }
       return `
         <div class="shipment-card" onclick="openCard('${c.id}')">
           <div class="head">
             <div class="id">${escapeHtml(c.id)}</div>
-            <span class="badge">${escapeHtml(typeLabel)}</span>
+            <div style="display:flex;gap:6px">${typeBadges.join('')}</div>
           </div>
-          <div class="meta">
-            <span>📅 ${fmtDate(c.payDate)}</span>
-            <span>💳 ${fmtNum(c.cardCount)} ใบ</span>
-            <span>💰 ${fmtBaht(c.pricePerCard, 0)} ฿/ใบ</span>
+          <div class="meta"><span>📅 ${fmtDate(c.payDate)}</span></div>
+          <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)">
+            ${breakdownRows.join('')}
           </div>
           <div class="footer">
-            <span class="total">รวม <strong>${fmtBaht(total, 2)} ฿</strong></span>
+            <span class="total">รวมจ่าย <strong>${fmtBaht(t.gross, 2)} ฿</strong></span>
             <span style="color:var(--text-muted);font-size:13px">${(c.photos||[]).length} หลักฐาน</span>
           </div>
         </div>
@@ -2584,13 +2644,9 @@ function renderCardList() {
   document.getElementById('main').innerHTML = `
     <div class="summary-grid">
       <div class="summary-card"><div class="label">รายการทั้งหมด</div><div class="value">${all.length}</div></div>
-      <div class="summary-card purple"><div class="label">Card รวม</div><div class="value">${fmtNum(totalCards)}</div></div>
-      <div class="summary-card orange"><div class="label">รายปี</div><div class="value">${annualCount}</div></div>
-      <div class="summary-card green"><div class="label">ตลอดชีพ</div><div class="value">${lifetimeCount}</div></div>
-    </div>
-    <div class="summary-card" style="margin-bottom:12px">
-      <div class="label">ยอดซื้อรวม</div>
-      <div class="value" style="color:var(--primary)">${fmtBaht(totalSpend, 2)} ฿</div>
+      <div class="summary-card purple"><div class="label">ยอดซื้อรวม</div><div class="value" style="font-size:18px">${fmtBaht(totals.gross, 2)} ฿</div></div>
+      <div class="summary-card orange"><div class="label">รายปี · ทุน/ใบ</div><div class="value" style="font-size:18px">${avgAnnual > 0 ? fmtBaht(avgAnnual, 2) : '-'} ฿</div></div>
+      <div class="summary-card green"><div class="label">ตลอดชีพ · ทุน/ใบ</div><div class="value" style="font-size:18px">${avgLifetime > 0 ? fmtBaht(avgLifetime, 2) : '-'} ฿</div></div>
     </div>
     <div class="section-header"><h2>ประวัติการซื้อ</h2></div>
     ${listHtml}
@@ -2614,9 +2670,8 @@ function newCard() {
     createdAt: now,
     updatedAt: now,
     payDate: todayISO(),
-    cardType: 'annual',
-    cardCount: 0,
-    pricePerCard: 0,
+    annual:   { count: 0, pricePerCard: 0, freeCount: 0 },
+    lifetime: { count: 0, pricePerCard: 0, freeCount: 0 },
     photos: []
   };
   if (!upsertCardLocal(shell)) return;
@@ -2624,50 +2679,74 @@ function newCard() {
   render();
 }
 
+function renderCardTypeBlock(label, prefix, data) {
+  const count = Number(data?.count) || 0;
+  const price = Number(data?.pricePerCard) || 0;
+  const free  = Number(data?.freeCount) || 0;
+  const gross = count * price;
+  const total = count + free;
+  const cpc = total > 0 ? gross / total : 0;
+  return `
+    <div class="form-section">
+      <h3>${label}</h3>
+      <div class="field-grid">
+        <div class="field">
+          <label>จำนวนที่ซื้อ (ใบ)</label>
+          <input type="number" id="card-${prefix}-count" min="0" inputmode="numeric" value="${count || ''}" oninput="recalcCardTotals()">
+        </div>
+        <div class="field">
+          <label>ราคาต่อใบ (฿)</label>
+          <input type="number" id="card-${prefix}-price" min="0" step="0.01" inputmode="decimal" value="${price || ''}" oninput="recalcCardTotals()">
+        </div>
+      </div>
+      <div class="field">
+        <label>จำนวนที่แถม (ใบ)</label>
+        <input type="number" id="card-${prefix}-free" min="0" inputmode="numeric" value="${free || ''}" oninput="recalcCardTotals()">
+        <div class="field-hint">กรอกหรือไม่กรอกก็ได้</div>
+      </div>
+      <div style="background:var(--bg);border-radius:var(--radius-sm);padding:10px 12px;display:flex;flex-direction:column;gap:4px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text-secondary)">
+          <span>ราคารวม</span>
+          <span id="card-${prefix}-gross">${fmtBaht(gross, 2)} ฿</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text-secondary)">
+          <span>จำนวนทั้งหมด (รวมแถม)</span>
+          <span id="card-${prefix}-total">${fmtNum(total)} ใบ</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:var(--primary);border-top:1px solid var(--border);padding-top:6px;margin-top:2px">
+          <span>ต้นทุนต่อใบ</span>
+          <span id="card-${prefix}-cpc">${total > 0 ? fmtBaht(cpc, 2) + ' ฿' : '-'}</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderCardForm(id) {
-  const c = getCard(id);
+  const c = normalizeCard(getCard(id));
   if (!c) { state.view = 'cards-dashboard'; render(); return; }
   renderTopbar(c.id);
   loadTempCardPhotos(c);
 
-  const cardCount = Number(c.cardCount) || 0;
-  const pricePerCard = Number(c.pricePerCard) || 0;
-  const total = cardCount * pricePerCard;
+  const grand = cardTotals(c);
 
   document.getElementById('main').innerHTML = `
     <div class="form-section">
-      <h3>💳 รายละเอียดการซื้อ</h3>
+      <h3>💳 ข้อมูลการซื้อ</h3>
       <div class="field">
         <label>วันที่จ่ายเงิน <span class="req">*</span></label>
         <input type="date" id="card-payDate" value="${escapeHtml(c.payDate || todayISO())}">
       </div>
-      <div class="field">
-        <label>ประเภท Card <span class="req">*</span></label>
-        <div class="radio-group">
-          <label class="radio-card ${c.cardType==='annual'?'selected':''}" onclick="selectCardType('annual')">
-            <input type="radio" name="cardType" value="annual" ${c.cardType==='annual'?'checked':''}>
-            รายปี
-          </label>
-          <label class="radio-card ${c.cardType==='lifetime'?'selected':''}" onclick="selectCardType('lifetime')">
-            <input type="radio" name="cardType" value="lifetime" ${c.cardType==='lifetime'?'checked':''}>
-            ตลอดชีพ
-          </label>
-        </div>
-      </div>
-      <div class="field-grid">
-        <div class="field">
-          <label>จำนวน Card (ใบ) <span class="req">*</span></label>
-          <input type="number" id="card-count" min="0" inputmode="numeric" value="${cardCount || ''}" oninput="recalcCardTotal()">
-        </div>
-        <div class="field">
-          <label>ราคาต่อใบ (฿) <span class="req">*</span></label>
-          <input type="number" id="card-price" min="0" step="0.01" inputmode="decimal" value="${pricePerCard || ''}" oninput="recalcCardTotal()">
-        </div>
-      </div>
-      <div class="cost-summary" style="margin-bottom:0;margin-top:6px">
-        <h3>ยอดรวม</h3>
-        <div class="cost-row total"><span>รวมทั้งสิ้น</span><span id="card-total">${fmtBaht(total, 2)} ฿</span></div>
-      </div>
+    </div>
+
+    ${renderCardTypeBlock('📅 รายปี', 'annual', c.annual)}
+    ${renderCardTypeBlock('♾️ ตลอดชีพ', 'lifetime', c.lifetime)}
+
+    <div class="cost-summary">
+      <h3>สรุปการซื้อครั้งนี้</h3>
+      <div class="cost-row"><span>รายปี (รวมแถม)</span><span id="sum-annual-total">${fmtNum(grand.annual.totalCards)} ใบ</span></div>
+      <div class="cost-row"><span>ตลอดชีพ (รวมแถม)</span><span id="sum-lifetime-total">${fmtNum(grand.lifetime.totalCards)} ใบ</span></div>
+      <div class="cost-row divider total"><span>รวมจ่ายทั้งสิ้น</span><span id="sum-gross">${fmtBaht(grand.gross, 2)} ฿</span></div>
     </div>
 
     <div class="form-section">
@@ -2681,40 +2760,54 @@ function renderCardForm(id) {
   `);
 }
 
-function selectCardType(type) {
-  const c = getCard(state.currentCardId);
-  if (!c) return;
-  c.cardType = type;
-  c.updatedAt = new Date().toISOString();
-  upsertCardLocal(c);
-  // อัปเดต UI radio ทันที โดยไม่ re-render ทั้งหมด (กันรูปที่ค้างใน input file)
-  document.querySelectorAll('.radio-card').forEach(el => el.classList.remove('selected'));
-  const target = document.querySelector(`.radio-card input[value="${type}"]`);
-  if (target) target.closest('.radio-card').classList.add('selected');
+function readCardTypeInputs(prefix) {
+  const count = Number(document.getElementById(`card-${prefix}-count`)?.value) || 0;
+  const price = Number(document.getElementById(`card-${prefix}-price`)?.value) || 0;
+  const free  = Number(document.getElementById(`card-${prefix}-free`)?.value)  || 0;
+  return { count, pricePerCard: price, freeCount: free };
 }
 
-function recalcCardTotal() {
-  const count = Number(document.getElementById('card-count')?.value) || 0;
-  const price = Number(document.getElementById('card-price')?.value) || 0;
-  const el = document.getElementById('card-total');
-  if (el) el.textContent = fmtBaht(count * price, 2) + ' ฿';
+function recalcCardTotals() {
+  let grandGross = 0;
+  ['annual', 'lifetime'].forEach(prefix => {
+    const { count, pricePerCard, freeCount } = readCardTypeInputs(prefix);
+    const gross = count * pricePerCard;
+    const total = count + freeCount;
+    const cpc = total > 0 ? gross / total : 0;
+    grandGross += gross;
+    const g = document.getElementById(`card-${prefix}-gross`);
+    const t = document.getElementById(`card-${prefix}-total`);
+    const c = document.getElementById(`card-${prefix}-cpc`);
+    const st = document.getElementById(`sum-${prefix}-total`);
+    if (g) g.textContent = fmtBaht(gross, 2) + ' ฿';
+    if (t) t.textContent = fmtNum(total) + ' ใบ';
+    if (c) c.textContent = total > 0 ? fmtBaht(cpc, 2) + ' ฿' : '-';
+    if (st) st.textContent = fmtNum(total) + ' ใบ';
+  });
+  const sg = document.getElementById('sum-gross');
+  if (sg) sg.textContent = fmtBaht(grandGross, 2) + ' ฿';
 }
 
 function saveCard() {
   const c = getCard(state.currentCardId);
   if (!c) { toast('ไม่พบ Card', 'error'); return; }
   const payDate = document.getElementById('card-payDate').value;
-  const cardType = document.querySelector('input[name="cardType"]:checked')?.value || c.cardType || 'annual';
-  const cardCount = Number(document.getElementById('card-count').value) || 0;
-  const pricePerCard = Number(document.getElementById('card-price').value) || 0;
-  if (!payDate)        { toast('ระบุวันที่จ่ายเงิน', 'error'); return; }
-  if (cardCount <= 0)  { toast('ระบุจำนวน Card', 'error'); return; }
-  if (pricePerCard <= 0) { toast('ระบุราคาต่อใบ', 'error'); return; }
+  if (!payDate) { toast('ระบุวันที่จ่ายเงิน', 'error'); return; }
+  const annual   = readCardTypeInputs('annual');
+  const lifetime = readCardTypeInputs('lifetime');
+  if (annual.count <= 0 && lifetime.count <= 0) {
+    toast('ระบุจำนวนที่ซื้ออย่างน้อย 1 ประเภท', 'error'); return;
+  }
+  // validation: ประเภทใดที่กรอก count → ต้องกรอก price ด้วย
+  if (annual.count > 0   && annual.pricePerCard   <= 0) { toast('ระบุราคาต่อใบของรายปี', 'error'); return; }
+  if (lifetime.count > 0 && lifetime.pricePerCard <= 0) { toast('ระบุราคาต่อใบของตลอดชีพ', 'error'); return; }
+
   const photos = collectCardPhotos();
   const updated = Object.assign({}, c, {
-    payDate, cardType, cardCount, pricePerCard, photos,
+    payDate, annual, lifetime, photos,
     updatedAt: new Date().toISOString()
   });
+  delete updated.cardType; delete updated.cardCount; delete updated.pricePerCard;
   if (!upsertCardLocal(updated)) return;
   toast('บันทึกเรียบร้อย ✓', 'success');
   state.view = 'cards-dashboard';
@@ -2778,8 +2871,7 @@ window.selectAlloc = selectAlloc;
 window.newCard = newCard;
 window.openCard = openCard;
 window.saveCard = saveCard;
-window.selectCardType = selectCardType;
-window.recalcCardTotal = recalcCardTotal;
+window.recalcCardTotals = recalcCardTotals;
 window.confirmDeleteCard = confirmDeleteCard;
 window.uploadCardPhotos = uploadCardPhotos;
 window.removeCardPhoto = removeCardPhoto;
