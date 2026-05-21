@@ -598,6 +598,43 @@
       padding: 8px 12px; margin-bottom: 12px;
       page-break-inside: avoid;
     }
+    /* Photos / PDFs section */
+    .print-report .pr-step-photos { margin-top: 10px; }
+    .print-report .pr-cat-block { margin-top: 6px; }
+    .print-report .pr-cat-head {
+      font-size: 11px; font-weight: 600; color: #444;
+      margin: 6px 0 4px; padding: 2px 6px;
+      background: #eee; border-left: 2px solid #888;
+    }
+    .print-report .pr-photo-grid {
+      display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px;
+    }
+    .print-report .pr-photo {
+      border: 1px solid #ccc; padding: 4px;
+      page-break-inside: avoid; break-inside: avoid;
+      background: #fff;
+    }
+    .print-report .pr-photo a { display: block; }
+    .print-report .pr-photo img {
+      width: 100%; height: auto;
+      max-height: 110mm; object-fit: contain;
+      display: block;
+    }
+    .print-report .pr-photo-caption {
+      font-size: 9px; color: #555; margin-top: 3px;
+      text-align: center; word-wrap: break-word; word-break: break-all;
+    }
+    .print-report .pr-pdf {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px;
+      margin-bottom: 4px; font-size: 11px;
+      page-break-inside: avoid;
+    }
+    .print-report .pr-pdf-icon { font-size: 18px; }
+    .print-report .pr-pdf a { color: #1e40af; text-decoration: underline; font-weight: 600; }
+    .print-report .pr-pdf-name { flex: 1; word-break: break-all; }
+    /* ตอนถ่ายเอกสาร: หลีกเลี่ยงให้ภาพไม่ขาดกลางหน้า */
+    .print-report a { color: inherit; text-decoration: none; }
   }
 </style>
 </head>
@@ -1886,8 +1923,9 @@ function renderOwnerDetail() {
       </div>
     ` : ''}
 
-    <div style="margin-top:20px">
-      <button class="btn btn-danger" style="width:100%" onclick="confirmDelete('${s.id}')">🗑 ลบ Shipment นี้</button>
+    <div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-secondary" style="flex:1;min-width:160px" onclick="printShipmentDetailReport()">🖨️ พิมพ์รายงานนี้</button>
+      <button class="btn btn-danger" style="flex:1;min-width:160px" onclick="confirmDelete('${s.id}')">🗑 ลบ Shipment</button>
     </div>
   `;
   renderBottomBar('');
@@ -3073,6 +3111,92 @@ function buildShipmentReportSection(s) {
   `;
 }
 
+const STEP_LABEL = {
+  A: 'A · ข้อมูลคำสั่งซื้อ',
+  B: 'B · จัดส่งจากโรงงาน',
+  C: 'C · น้ำหนัก / ขนส่ง',
+  D: 'D · ถึงไทย / ค่าใช้จ่าย',
+  E: 'E · รับของเข้าคลัง'
+};
+
+function buildShipmentPhotosSection(s) {
+  let html = '';
+  ['A', 'B', 'C', 'D', 'E'].forEach(step => {
+    const stepData = s['step' + step];
+    if (!stepData || !Array.isArray(stepData.photos) || stepData.photos.length === 0) return;
+    const photos = stepData.photos.filter(p => p && (p.url || p.fileId));
+    if (photos.length === 0) return;
+
+    // group by category
+    const byCat = {};
+    photos.forEach(p => { (byCat[p.category || 'general'] = byCat[p.category || 'general'] || []).push(p); });
+
+    let catHtml = '';
+    Object.entries(byCat).forEach(([catKey, list]) => {
+      const info = PHOTO_CAT_INFO[catKey] || { icon: '📎', label: catKey === 'general' ? 'รูปทั่วไป' : catKey };
+      const pdfs = list.filter(p => isPdfAttachment(p));
+      const images = list.filter(p => !isPdfAttachment(p));
+
+      let body = '';
+      if (images.length) {
+        body += `<div class="pr-photo-grid">${images.map(p => `
+          <div class="pr-photo">
+            <a href="${escapeHtml(p.viewUrl || p.url || '')}" target="_blank" rel="noopener">
+              <img src="${escapeHtml(p.url || p.thumbUrl || '')}" alt="${escapeHtml(p.name || '')}" referrerpolicy="no-referrer">
+            </a>
+            <div class="pr-photo-caption">${escapeHtml(p.name || '')}</div>
+          </div>
+        `).join('')}</div>`;
+      }
+      if (pdfs.length) {
+        body += pdfs.map(p => `
+          <div class="pr-pdf">
+            <span class="pr-pdf-icon">📄</span>
+            <span class="pr-pdf-name">${escapeHtml(p.name || 'PDF')}</span>
+            <a href="${escapeHtml(p.viewUrl || p.url || '')}" target="_blank" rel="noopener">เปิดดู ↗</a>
+          </div>
+        `).join('');
+      }
+      catHtml += `
+        <div class="pr-cat-block">
+          <div class="pr-cat-head">${info.icon} ${escapeHtml(info.label)} · ${list.length} ไฟล์</div>
+          ${body}
+        </div>
+      `;
+    });
+
+    html += `
+      <div class="pr-step-photos">
+        <div class="pr-section-title" style="font-size:12px;color:#222;margin-top:10px">Step ${escapeHtml(STEP_LABEL[step])}</div>
+        ${catHtml}
+      </div>
+    `;
+  });
+  return html;
+}
+
+function printShipmentDetailReport() {
+  const s = getShipment(state.currentId);
+  if (!s) { toast('ไม่พบ Shipment', 'error'); return; }
+
+  const section = buildShipmentReportSection(s);
+  const photosSection = buildShipmentPhotosSection(s);
+
+  document.getElementById('print-report').innerHTML = `
+    <div class="pr-header">
+      <div class="pr-title">รายงาน Shipment · ${escapeHtml(s.id)}</div>
+      <div class="pr-meta">Container No: ${escapeHtml(s.containerNo || s.id)} · พิมพ์เมื่อ ${fmtNow()}</div>
+    </div>
+    ${section}
+    ${photosSection ? `
+      <div class="pr-section-title" style="font-size:14px;margin-top:14px;color:#000;font-weight:700">📎 ภาพ / เอกสารทั้งหมด</div>
+      ${photosSection}
+    ` : ''}
+    <div class="pr-footer">— สิ้นสุดรายงาน Shipment ${escapeHtml(s.id)} —</div>
+  `;
+  setTimeout(() => window.print(), 80);
+}
+
 function printShipmentReport() {
   const all = loadShipments().slice().sort((a,b) => b.id.localeCompare(a.id));
   const filtered = state.filter === 'all' ? all
@@ -3293,6 +3417,7 @@ window.confirmDeleteCard = confirmDeleteCard;
 window.uploadCardPhotos = uploadCardPhotos;
 window.removeCardPhoto = removeCardPhoto;
 window.printShipmentReport = printShipmentReport;
+window.printShipmentDetailReport = printShipmentDetailReport;
 window.printCardReport = printCardReport;
 </script>
 </body>
