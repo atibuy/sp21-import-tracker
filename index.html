@@ -3065,14 +3065,16 @@ function buildShipmentReportSection(s) {
         </tbody>
       </table>
     `;
+    // ค่าศุลกากร/VAT แสดงเฉพาะ carrier=NEXT (TPI รวมในค่าขนส่งแล้ว)
+    const showCustomsVat = s.stepC?.carrier === 'NEXT';
     costsHtml = `
       <div class="pr-section-title">ค่าใช้จ่าย</div>
       <table>
         <thead><tr><th>หมวด</th><th class="num">จำนวน (฿)</th></tr></thead>
         <tbody>
           <tr><td>ค่าขนส่งจีน→ไทย</td><td class="num">${fmtBaht(costs.shippingCost, 2)}</td></tr>
-          <tr><td>ค่าภาษีศุลกากร</td><td class="num">${fmtBaht(costs.customs, 2)}</td></tr>
-          <tr><td>VAT</td><td class="num">${fmtBaht(costs.vat, 2)}</td></tr>
+          ${showCustomsVat ? `<tr><td>ค่าภาษีศุลกากร</td><td class="num">${fmtBaht(costs.customs, 2)}</td></tr>` : ''}
+          ${showCustomsVat ? `<tr><td>VAT</td><td class="num">${fmtBaht(costs.vat, 2)}</td></tr>` : ''}
           <tr><td>TPI → นิ่ม</td><td class="num">${fmtBaht(costs.tpiToNim, 2)}</td></tr>
           <tr><td>นิ่ม Express</td><td class="num">${fmtBaht(costs.nim, 2)}</td></tr>
           <tr><td><strong>ค่าขนส่ง+อื่นๆ รวม</strong></td><td class="num"><strong>${fmtBaht(costs.totalExtra, 2)}</strong></td></tr>
