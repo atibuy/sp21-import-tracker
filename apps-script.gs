@@ -8,7 +8,7 @@
  *  1) เปิด Google Apps Script: https://script.google.com/  →  New project
  *  2) ลบไฟล์ Code.gs ที่ขึ้นมา แล้ว paste ไฟล์นี้ทั้งหมดลงไป
  *  3) เมนู Run → เลือกฟังก์ชัน  initSheets  → กด Run
- *     (ครั้งแรกจะให้ Authorize เข้าถึง Google Sheets — กดอนุญาต)
+ *     (ครั้งแรกจะให้ Authorize เข้าถึง Google Sheets + Google Drive — กดอนุญาตทั้งคู่)
  *     ระบบจะสร้าง header row บน sheet "Shipments", "Items", "Costs",
  *     "Photos", "PhotoData"
  *  4) เมนู Deploy → New deployment
@@ -22,11 +22,24 @@
  *  หากแก้ไขโค้ดในไฟล์นี้  ต้อง  Deploy → Manage deployments → ปุ่ม ✎ →
  *  เปลี่ยน "Version" เป็น New version → Deploy   ไม่งั้น URL เดิมจะรันโค้ดเก่า
  *
+ *  อัปเกรดจากเวอร์ชันก่อน (base64-in-Sheets → Drive)
+ *  -------------------------------------------------
+ *  เวอร์ชันนี้เก็บรูปภาพ/PDF จริงใน Google Drive (โฟลเดอร์ SP21/<containerNo>/)
+ *  แทนที่จะเก็บ base64 chunk ใน sheet "PhotoData".  หลัง deploy แล้ว
+ *  - รูปที่อัปใหม่จะไปอยู่ใน Drive ทันที
+ *  - รูปเก่าที่ยังเก็บเป็น chunk ใน "PhotoData" ยังอ่านได้ตามปกติ
+ *    (ระบบ fallback ไป reconstruct dataUrl ให้)
+ *  - ครั้งแรกที่ถูกเรียก uploadPhoto, Apps Script จะขอ scope ใหม่ของ Drive
+ *    ไปที่ Apps Script editor → Run → เลือก authorizeDriveScope → กด Run
+ *    เพื่อ accept scope ล่วงหน้า (ไม่งั้น web-app call แรกจะ error)
+ *
  *  หมายเหตุ
  *  --------
- *  • รูปภาพเก็บเป็น base64 ตรงๆ บน Google Sheets (ไม่ใช้ Drive แล้ว)
- *    sheet "Photos" เก็บ metadata, sheet "PhotoData" เก็บก้อน base64
- *    ที่ตัดเป็น chunk ทุก 40,000 chars (cell limit คือ 50,000)
+ *  • รูปภาพเก็บใน Google Drive: My Drive / SP21 / <containerNo> /
+ *    ไฟล์ตั้ง sharing เป็น ANYONE_WITH_LINK + VIEW เพื่อให้ <img> ใน browser
+ *    โหลดผ่าน lh3.googleusercontent.com ได้โดยไม่ต้องล็อกอิน
+ *  • sheet "Photos" เก็บ metadata + Drive URLs;  "PhotoData" คงไว้สำหรับ
+ *    legacy chunks ที่อัปไว้สมัยก่อน — ไม่ใช้เขียนใหม่อีก
  *  • ตาราง Costs เป็น snapshot ของต้นทุนล่าสุดที่คำนวณจาก client
  *    หากแก้ Step ใด ๆ ที่กระทบต้นทุน  row นี้จะถูกเขียนทับ
  */
@@ -39,8 +52,9 @@ const SHEET_COSTS      = 'Costs';
 const SHEET_PHOTOS     = 'Photos';
 const SHEET_PHOTO_DATA = 'PhotoData';
 
-// ขนาด chunk (chars ต่อ cell) — sheet cell limit คือ 50,000  เผื่อ safety 10K
-const PHOTO_CHUNK_SIZE = 40000;
+// โฟลเดอร์ราก ใน My Drive ของบัญชีที่ deploy script
+// โครงสร้าง: My Drive / SP21 / <containerNo> / <step>_<category>_<ts>_<rand>.<ext>
+const DRIVE_ROOT_FOLDER = 'SP21';
 
 // IMPORTANT: append-only — เพิ่ม column ใหม่ได้ที่ "ท้าย array" เท่านั้น
 // เพื่อให้ index ตรงกับ sheet ที่มีอยู่ (data เก่าจะอยู่ตำแหน่งเดิม)
@@ -163,7 +177,39 @@ function initSheets() {
   return 'Sheets initialized: ' + [SHEET_SHIPMENTS, SHEET_ITEMS, SHEET_COSTS, SHEET_PHOTOS, SHEET_PHOTO_DATA].join(', ');
 }
 
-/* ================ Photo storage (base64 in Sheets) ================ */
+/* ================ Photo storage (Google Drive) ================ */
+
+// เรียกฟังก์ชันนี้ครั้งแรกหลัง paste โค้ดใหม่ (Run → authorizeDriveScope)
+// จะ trigger consent screen ให้ขอ scope ของ Drive ก่อน — ไม่งั้น web-app call แรก
+// จะ fail ด้วย "Authorization is required to perform that action"
+function authorizeDriveScope() {
+  const folder = getOrCreateChildFolder(DriveApp.getRootFolder(), DRIVE_ROOT_FOLDER);
+  return 'Drive scope OK. Root folder id: ' + folder.getId();
+}
+
+function getOrCreateChildFolder(parent, name) {
+  const it = parent.getFoldersByName(name);
+  return it.hasNext() ? it.next() : parent.createFolder(name);
+}
+
+function getShipmentFolder(containerNo) {
+  const root = getOrCreateChildFolder(DriveApp.getRootFolder(), DRIVE_ROOT_FOLDER);
+  return getOrCreateChildFolder(root, sanitizeFolderName(containerNo));
+}
+
+// containerNo มาจาก user input — กันอักษร reserved ของ filesystem ไว้ก่อน
+function sanitizeFolderName(name) {
+  return String(name || '').replace(/[\\/:*?"<>|]/g, '_').trim() || 'unknown';
+}
+
+// สร้าง URL ที่ <img src> ใน browser โหลดได้ — ต้องการให้ไฟล์ถูก share แบบ ANYONE_WITH_LINK
+// `lh3.googleusercontent.com/d/<id>=w<width>` ใช้งานได้ดี + รองรับ referrerpolicy=no-referrer
+function buildDriveImageUrl(fileId, width) {
+  return 'https://lh3.googleusercontent.com/d/' + fileId + '=w' + width;
+}
+function buildDriveViewUrl(fileId) {
+  return 'https://drive.google.com/file/d/' + fileId + '/view';
+}
 
 function uploadPhoto(payload) {
   if (!payload || !payload.shipmentId) throw new Error('shipmentId required');
@@ -172,33 +218,43 @@ function uploadPhoto(payload) {
   if (!m) throw new Error('Invalid dataUrl');
   const mime = m[1];
   const b64 = m[2];
-  const fileId = Utilities.getUuid();
+
+  const containerNo = String(payload.containerNo || payload.shipmentId || '').trim();
+  if (!containerNo) throw new Error('containerNo required');
+  const step = String(payload.step || 'X').toUpperCase().replace(/[^A-Z0-9]/g, '') || 'X';
+  const category = String(payload.category || 'general').replace(/[^A-Za-z0-9_-]/g, '_') || 'general';
+
   const ext = (mime.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
-  const safeName = (payload.filename ? String(payload.filename) : (Date.now() + '_' + Math.random().toString(36).slice(2, 8))) + '.' + ext;
-  const uploadedAt = new Date().toISOString();
-  writePhotoChunks(fileId, b64);
-  // client ใช้ url/viewUrl/thumbUrl ในการ render ทันที — ส่ง dataUrl กลับให้เลย
+  const ts = Utilities.formatDate(new Date(), 'GMT+7', 'yyyyMMdd_HHmmss');
+  const rand = Math.random().toString(36).slice(2, 6);
+  const safeName = step + '_' + category + '_' + ts + '_' + rand + '.' + ext;
+
+  const folder = getShipmentFolder(containerNo);
+  const bytes = Utilities.base64Decode(b64);
+  const blob = Utilities.newBlob(bytes, mime, safeName);
+  const file = folder.createFile(blob);
+
+  // ANYONE_WITH_LINK + VIEW — ถ้า org policy ห้ามจะ throw และลบไฟล์ทิ้งให้
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (e) {
+    try { file.setTrashed(true); } catch (_) {}
+    throw new Error('ตั้งสิทธิ์แชร์ไฟล์ไม่ได้ (org/domain policy ห้าม share สาธารณะ?): ' + (e && e.message || e));
+  }
+
+  const fileId = file.getId();
   return {
     fileId: fileId,
-    url:      payload.dataUrl,
-    viewUrl:  payload.dataUrl,
-    thumbUrl: payload.dataUrl,
+    url:      buildDriveImageUrl(fileId, 2000),
+    viewUrl:  buildDriveViewUrl(fileId),
+    thumbUrl: buildDriveImageUrl(fileId, 400),
     name: safeName,
-    uploadedAt: uploadedAt,
+    uploadedAt: new Date().toISOString(),
     mimeType: mime
   };
 }
 
-function writePhotoChunks(fileId, b64) {
-  const sheet = getOrCreateSheet(SHEET_PHOTO_DATA, PHOTO_DATA_COLS);
-  const total = Math.max(1, Math.ceil(b64.length / PHOTO_CHUNK_SIZE));
-  const rows = [];
-  for (let i = 0; i < total; i++) {
-    rows.push([fileId, i, total, b64.substring(i * PHOTO_CHUNK_SIZE, (i + 1) * PHOTO_CHUNK_SIZE)]);
-  }
-  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, PHOTO_DATA_COLS.length).setValues(rows);
-}
-
+// legacy: เคยตัด base64 เป็น chunk เก็บใน "PhotoData" — เก็บฟังก์ชันลบไว้ใช้ตอน delete
 function deletePhotoChunks(fileId) {
   const sheet = ss().getSheetByName(SHEET_PHOTO_DATA);
   if (!sheet || sheet.getLastRow() < 2) return;
@@ -210,8 +266,16 @@ function deletePhotoChunks(fileId) {
 
 function deletePhoto(payload) {
   if (!payload || !payload.fileId) throw new Error('fileId required');
-  deletePhotoChunks(payload.fileId);
-  return payload.fileId;
+  const fileId = String(payload.fileId);
+  // 1) Drive file (รูปใหม่)
+  try {
+    DriveApp.getFileById(fileId).setTrashed(true);
+  } catch (e) {
+    // รูป legacy (ไม่มีจริงใน Drive) — ข้าม
+  }
+  // 2) Legacy chunks ใน PhotoData (ถ้ามี)
+  deletePhotoChunks(fileId);
+  return fileId;
 }
 
 /* ================ List ================ */
@@ -240,11 +304,11 @@ function listShipments() {
 
 function loadAllPhotosByShipment() {
   const photoSheet = getOrCreateSheet(SHEET_PHOTOS, PHOTO_COLS);
-  const dataSheet  = getOrCreateSheet(SHEET_PHOTO_DATA, PHOTO_DATA_COLS);
+  const dataSheet  = ss().getSheetByName(SHEET_PHOTO_DATA);
 
-  // 1) อ่าน chunks ทั้งหมด แล้วเรียงตาม chunkIdx
+  // 1) อ่าน legacy chunks (ถ้ามี sheet PhotoData) — ใช้ fallback สำหรับรูปเก่า
   const chunksByFileId = {};
-  if (dataSheet.getLastRow() >= 2) {
+  if (dataSheet && dataSheet.getLastRow() >= 2) {
     const rows = dataSheet.getRange(2, 1, dataSheet.getLastRow() - 1, PHOTO_DATA_COLS.length).getValues();
     rows.forEach(function (r) {
       const fid = String(r[0] || '');
@@ -256,7 +320,7 @@ function loadAllPhotosByShipment() {
     });
   }
 
-  // 2) อ่าน metadata + รวม chunks เป็น dataUrl
+  // 2) อ่าน metadata Photos
   const out = {};
   if (photoSheet.getLastRow() < 2) return out;
   const rows = photoSheet.getRange(2, 1, photoSheet.getLastRow() - 1, PHOTO_COLS.length).getValues();
@@ -270,20 +334,31 @@ function loadAllPhotosByShipment() {
       if (!sid || !step) return;
       const fileId = String(r[ix('fileId')] || '');
       const mime = String(r[ix('mimeType')] || 'image/jpeg');
-      const chunks = chunksByFileId[fileId];
-      let dataUrl = '';
-      if (chunks && chunks.length) {
-        dataUrl = 'data:' + mime + ';base64,' + chunks.map(function (c) { return c.data; }).join('');
-      } else {
-        // legacy: รูปที่อัปด้วยเวอร์ชัน Drive — ใช้ url เดิมไปก่อน (อาจใช้งานไม่ได้)
-        dataUrl = String(r[ix('url')] || '');
+      const savedUrl   = String(r[ix('url')] || '');
+      const savedView  = String(r[ix('viewUrl')] || '');
+      const savedThumb = String(r[ix('thumbUrl')] || '');
+
+      let url = savedUrl, viewUrl = savedView || savedUrl, thumbUrl = savedThumb || savedUrl;
+      if (!url) {
+        // legacy: ไม่มี URL ใน sheet — ลอง reconstruct จาก chunks
+        const chunks = chunksByFileId[fileId];
+        if (chunks && chunks.length) {
+          const dataUrl = 'data:' + mime + ';base64,' + chunks.map(function (c) { return c.data; }).join('');
+          url = viewUrl = thumbUrl = dataUrl;
+        } else if (fileId) {
+          // ไม่มีทั้ง URL ทั้ง chunks — เดาว่าเป็นไฟล์ Drive ที่ยังไม่ได้บันทึก URL กลับลง sheet
+          url      = buildDriveImageUrl(fileId, 2000);
+          viewUrl  = buildDriveViewUrl(fileId);
+          thumbUrl = buildDriveImageUrl(fileId, 400);
+        }
       }
+
       const photo = {
         category: r[ix('category')] || 'general',
         fileId: fileId,
-        url:      dataUrl,
-        viewUrl:  dataUrl,
-        thumbUrl: dataUrl,
+        url:      url,
+        viewUrl:  viewUrl,
+        thumbUrl: thumbUrl,
         name: r[ix('name')] || '',
         uploadedAt: r[ix('uploadedAt')] || '',
         mimeType: mime
@@ -556,6 +631,9 @@ function collectShipmentPhotos(s) {
         step: step,
         category: p.category || 'general',
         fileId: p.fileId,
+        url:      p.url || '',
+        viewUrl:  p.viewUrl || '',
+        thumbUrl: p.thumbUrl || '',
         name: p.name || '',
         uploadedAt: p.uploadedAt || '',
         mimeType: p.mimeType || ''
@@ -585,9 +663,9 @@ function replacePhotosFor(shipmentId, photos) {
     set('category', p.category || '');
     set('idx', i);
     set('fileId', p.fileId || '');
-    set('url', '');
-    set('viewUrl', '');
-    set('thumbUrl', '');
+    set('url',      p.url || '');
+    set('viewUrl',  p.viewUrl || '');
+    set('thumbUrl', p.thumbUrl || '');
     set('name', p.name || '');
     set('uploadedAt', p.uploadedAt || '');
     set('mimeType', p.mimeType || '');
@@ -603,6 +681,21 @@ function deleteShipmentById(id) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
+    // 0) เก็บ containerNo ของ shipment ก่อน — ใช้หา Drive folder ตอนล้างไฟล์
+    let containerNo = '';
+    const shipSheet = ss().getSheetByName(SHEET_SHIPMENTS);
+    if (shipSheet && shipSheet.getLastRow() >= 2) {
+      const idIdx = SHIPMENT_COLS.indexOf('id');
+      const cIdx  = SHIPMENT_COLS.indexOf('containerNo');
+      const rows = shipSheet.getRange(2, 1, shipSheet.getLastRow() - 1, SHIPMENT_COLS.length).getValues();
+      for (let i = 0; i < rows.length; i++) {
+        if (String(rows[i][idIdx]) === String(id)) {
+          containerNo = String(rows[i][cIdx] || rows[i][idIdx] || '');
+          break;
+        }
+      }
+    }
+
     // 1) เก็บ fileId ของรูปทุกใบใน shipment ก่อนลบ metadata
     const photoSheet = ss().getSheetByName(SHEET_PHOTOS);
     const fileIdsToDelete = [];
@@ -623,7 +716,7 @@ function deleteShipmentById(id) {
         if (String(ids[i][0]) === String(id)) sheet.deleteRow(i + 2);
       }
     });
-    // 3) ลบ chunks ใน PhotoData ที่เกี่ยวข้อง
+    // 3) ลบ chunks legacy ใน PhotoData ที่เกี่ยวข้อง
     if (fileIdsToDelete.length) {
       const dataSheet = ss().getSheetByName(SHEET_PHOTO_DATA);
       if (dataSheet && dataSheet.getLastRow() >= 2) {
@@ -634,6 +727,21 @@ function deleteShipmentById(id) {
           if (fidSet[String(fids[i][0])]) dataSheet.deleteRow(i + 2);
         }
       }
+    }
+    // 4) ลบไฟล์จริงใน Drive (best-effort — รูป legacy chunked จะ throw แต่ข้าม)
+    fileIdsToDelete.forEach(function (fid) {
+      try { DriveApp.getFileById(fid).setTrashed(true); } catch (e) { /* ignore */ }
+    });
+    // 5) ลบโฟลเดอร์ SP21/<containerNo>/ ทิ้ง (ถ้าโฟลเดอร์ว่างหรือมีแค่ orphan files ของ shipment นี้)
+    if (containerNo) {
+      try {
+        const rootIt = DriveApp.getRootFolder().getFoldersByName(DRIVE_ROOT_FOLDER);
+        if (rootIt.hasNext()) {
+          const sp21 = rootIt.next();
+          const subIt = sp21.getFoldersByName(sanitizeFolderName(containerNo));
+          if (subIt.hasNext()) subIt.next().setTrashed(true);
+        }
+      } catch (e) { /* best-effort */ }
     }
     return id;
   } finally {
