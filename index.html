@@ -2507,7 +2507,8 @@ function confirmReceive(id) {
 const CARD_TYPE_LABEL = { annual: 'รายปี', lifetime: 'ตลอดชีพ' };
 const CARD_PHOTO_CATEGORIES = [
   { key: 'agent_transfer', label: 'โอนเงินให้ตัวแทน',      icon: '🏦' },
-  { key: 'china_transfer', label: 'ตัวแทนโอนไปจีน',         icon: '💴' }
+  { key: 'china_transfer', label: 'ตัวแทนโอนไปจีน',         icon: '💴' },
+  { key: 'invoice',        label: 'Invoice',               icon: '🧾' }
 ];
 const CARD_PHOTO_CAT_INFO = {};
 CARD_PHOTO_CATEGORIES.forEach(c => { CARD_PHOTO_CAT_INFO[c.key] = c; });
@@ -2664,6 +2665,22 @@ function normalizeCard(c) {
     c[k].pricePerCard = Number(c[k].pricePerCard) || 0;
     c[k].freeCount    = Number(c[k].freeCount) || 0;
   });
+  // payDate: cloud คืน Date object → toISOString() เป็น "YYYY-MM-DDTHH:MM:SS.sssZ"
+  // ซึ่ง <input type="date"> ไม่รับ → ต้องตัดเหลือ YYYY-MM-DD ตาม local timezone
+  if (c.payDate) {
+    const s = String(c.payDate);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      // อยู่ในรูปแบบที่ถูกต้องอยู่แล้ว
+    } else {
+      const d = new Date(s);
+      if (!isNaN(d)) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        c.payDate = `${y}-${m}-${day}`;
+      }
+    }
+  }
   // exchangeRate: 0/null/undefined → 1 เพื่อให้การ์ดเก่า (price เป็นบาทอยู่แล้ว) แสดงยอดเดิม
   c.exchangeRate = Number(c.exchangeRate) || 0;
   if (c.exchangeRate <= 0) c.exchangeRate = 1;
