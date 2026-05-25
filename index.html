@@ -902,10 +902,31 @@ async function bootstrapFromCloud() {
     }
     if (Array.isArray(remoteCards)) {
       const local = loadCards();
+      const localById = new Map(local.map(c => [c.id, c]));
       const remoteIds = new Set(remoteCards.map(r => r.id));
+      // Per-card merge: if cloud lost a positive local exchangeRate / payDate
+      // (legacy row written before raw_json backup existed), restore from local
+      // and re-queue a saveCard so cloud gets healed on the next drain.
+      const merged = remoteCards.map(r => {
+        const l = localById.get(r.id);
+        if (!l) return r;
+        const cloudRate = Number(r.exchangeRate) || 0;
+        const localRate = Number(l.exchangeRate) || 0;
+        const cloudHasPayDate = !!r.payDate;
+        const localHasPayDate = !!l.payDate;
+        const rateLost    = cloudRate <= 0 && localRate > 0;
+        const payDateLost = !cloudHasPayDate && localHasPayDate;
+        if (!rateLost && !payDateLost) return r;
+        const fixed = Object.assign({}, r, {
+          exchangeRate: rateLost    ? localRate    : r.exchangeRate,
+          payDate:      payDateLost ? l.payDate    : r.payDate
+        });
+        enqueueOp({ action: 'saveCard', payload: { card: fixed } });
+        return fixed;
+      });
       const localOnly = local.filter(c => !remoteIds.has(c.id));
       localOnly.forEach(c => enqueueOp({ action: 'saveCard', payload: { card: c } }));
-      saveCardsLocal(remoteCards.concat(localOnly));
+      saveCardsLocal(merged.concat(localOnly));
     }
     setSyncStatus('online');
   } catch (e) {

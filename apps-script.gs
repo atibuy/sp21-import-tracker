@@ -124,7 +124,10 @@ const CARD_COLS = [
   'lifetime_count', 'lifetime_price', 'lifetime_free',
   // annual_price/lifetime_price ตอนนี้คือ "ราคาต่อใบ (¥)" — ต้องคูณ exchange_rate ถึงได้บาท
   // exchange_rate = 0/null สำหรับการ์ดเก่า (ราคาต่อใบเป็นบาทอยู่แล้ว) — frontend treat 0 → 1
-  'exchange_rate'
+  'exchange_rate',
+  // backup ของทั้ง card object (เหมือน Shipments.raw_json) — ใช้เป็น source of truth
+  // เพื่อให้ data ไม่หายเมื่อ column ลำดับเพี้ยน / migration ผิด
+  'raw_json'
 ];
 
 /* ================ Web app entry points ================ */
@@ -748,20 +751,49 @@ function uploadCardPhoto(payload) {
 function listCards() {
   const sheet = getOrCreateSheet(SHEET_CARDS, CARD_COLS);
   if (sheet.getLastRow() < 2) return [];
-  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, CARD_COLS.length).getValues();
-  const ix = function (name) { return CARD_COLS.indexOf(name); };
+  // อ่าน header จริงจาก sheet แล้ว map name → index — กัน column ในชีตไม่ตรงลำดับ CARD_COLS
+  // (ที่ผ่านมา upsertCard/listCards ใช้ CARD_COLS.indexOf ซึ่งจะเขียน/อ่านผิดคอลัมน์
+  // เมื่อ migration เพิ่ม column ในลำดับที่ต่างกัน ทำให้ exchange_rate กลายเป็น 0)
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (v) { return String(v); });
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+  const ix = function (name) { return headers.indexOf(name); };
   const toIso = function (v) { return v instanceof Date ? v.toISOString() : (v || null); };
   const num = function (v) { return Number(v) || 0; };
   return rows.map(function (r) {
     let photos = [];
-    const raw = r[ix('photos_json')];
-    if (raw) { try { photos = JSON.parse(raw) || []; } catch (e) { photos = []; } }
+    const photosRaw = r[ix('photos_json')];
+    if (photosRaw) { try { photos = JSON.parse(photosRaw) || []; } catch (e) { photos = []; } }
 
-    // ค่าใหม่ (annual_/lifetime_) — ถ้ามีคอลัมน์ใดมีค่า > 0 ถือเป็น new shape
+    // 1) preferred path: raw_json — full card backup, immune to column-mapping bugs
+    //    (raw_json strips photo dataUrl on write, so we always overlay photos from photos_json below)
+    const rawIdx = ix('raw_json');
+    if (rawIdx >= 0) {
+      const rawStr = r[rawIdx];
+      if (rawStr) {
+        try {
+          const parsed = JSON.parse(rawStr);
+          if (parsed && parsed.id) {
+            parsed.id = String(parsed.id);
+            parsed.createdAt = parsed.createdAt || toIso(r[ix('createdAt')]);
+            parsed.updatedAt = parsed.updatedAt || toIso(r[ix('updatedAt')]);
+            // payDate / exchangeRate / annual / lifetime — trust raw_json as source of truth
+            parsed.exchangeRate = Number(parsed.exchangeRate) || 0;
+            if (!parsed.annual)   parsed.annual   = { count: 0, pricePerCard: 0, freeCount: 0 };
+            if (!parsed.lifetime) parsed.lifetime = { count: 0, pricePerCard: 0, freeCount: 0 };
+            // photos with real URLs live in photos_json — overlay
+            parsed.photos = Array.isArray(photos) ? photos : (parsed.photos || []);
+            return parsed;
+          }
+        } catch (e) { /* fall through to column-by-column */ }
+      }
+    }
+
+    // 2) fallback: build from individual columns (legacy rows / corrupted raw_json)
     let annual   = { count: num(r[ix('annual_count')]),   pricePerCard: num(r[ix('annual_price')]),   freeCount: num(r[ix('annual_free')])   };
     let lifetime = { count: num(r[ix('lifetime_count')]), pricePerCard: num(r[ix('lifetime_price')]), freeCount: num(r[ix('lifetime_free')]) };
 
-    // legacy fallback — ถ้า new cols ว่างหมดแต่มี cardType/cardCount เก่า → กระจายไปยังประเภทที่ตรง
+    // legacy migration: ถ้า new cols ว่างหมดแต่มี cardType/cardCount เก่า → กระจายไปยังประเภทที่ตรง
     if (annual.count === 0 && lifetime.count === 0 && annual.pricePerCard === 0 && lifetime.pricePerCard === 0) {
       const legacyType = String(r[ix('cardType')] || '');
       const legacyCount = num(r[ix('cardCount')]);
@@ -794,9 +826,12 @@ function upsertCard(payload) {
   lock.waitLock(20000);
   try {
     const sheet = getOrCreateSheet(SHEET_CARDS, CARD_COLS);
-    const row = new Array(CARD_COLS.length).fill('');
+    // อ่าน header จริงจาก sheet แล้วเขียนตามตำแหน่งจริง — กัน column ลำดับเพี้ยน
+    const lastCol = sheet.getLastColumn();
+    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (v) { return String(v); });
+    const row = new Array(lastCol).fill('');
     const set = function (name, val) {
-      const idx = CARD_COLS.indexOf(name);
+      const idx = headers.indexOf(name);
       if (idx >= 0) row[idx] = val == null ? '' : val;
     };
     set('id', c.id);
@@ -819,18 +854,32 @@ function upsertCard(payload) {
     set('lifetime_free',  Number(l.freeCount) || 0);
     set('exchange_rate',  Number(c.exchangeRate) || 0);
 
+    // raw_json — backup ทั้ง card (ตัด photos.dataUrl ทิ้ง  ไม่งั้น cell บวมเกิน limit)
+    // ใช้เป็น source of truth ตอน read  กัน column-mapping bug ทำข้อมูลหายอีก
+    const lean = JSON.parse(JSON.stringify(c));
+    if (Array.isArray(lean.photos)) {
+      lean.photos = lean.photos.map(function (p) {
+        const copy = Object.assign({}, p);
+        delete copy.dataUrl;
+        return copy;
+      });
+    }
+    const rawStr = JSON.stringify(lean);
+    set('raw_json', rawStr.length > 49000 ? '' : rawStr);
+
+    const idCol = headers.indexOf('id');
     const lastRow = sheet.getLastRow();
     let foundIdx = -1;
-    if (lastRow >= 2) {
-      const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    if (idCol >= 0 && lastRow >= 2) {
+      const ids = sheet.getRange(2, idCol + 1, lastRow - 1, 1).getValues();
       for (let i = 0; i < ids.length; i++) {
         if (String(ids[i][0]) === String(c.id)) { foundIdx = i; break; }
       }
     }
     if (foundIdx === -1) {
-      sheet.getRange(sheet.getLastRow() + 1, 1, 1, CARD_COLS.length).setValues([row]);
+      sheet.getRange(sheet.getLastRow() + 1, 1, 1, lastCol).setValues([row]);
     } else {
-      sheet.getRange(foundIdx + 2, 1, 1, CARD_COLS.length).setValues([row]);
+      sheet.getRange(foundIdx + 2, 1, 1, lastCol).setValues([row]);
     }
     return c.id;
   } finally {
@@ -845,8 +894,10 @@ function deleteCardById(id) {
   try {
     const sheet = ss().getSheetByName(SHEET_CARDS);
     if (!sheet || sheet.getLastRow() < 2) return id;
-    const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, CARD_COLS.length).getValues();
-    const ix = function (name) { return CARD_COLS.indexOf(name); };
+    const lastCol = sheet.getLastColumn();
+    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (v) { return String(v); });
+    const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
+    const ix = function (name) { return headers.indexOf(name); };
     const photoFileIds = [];
     for (let i = rows.length - 1; i >= 0; i--) {
       if (String(rows[i][ix('id')]) === String(id)) {
