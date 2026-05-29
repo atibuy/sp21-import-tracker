@@ -733,6 +733,7 @@ function enqueueOp(op) {
     if (op.action === 'deleteCard') return o.id === op.id;
     if (op.action === 'save')       return o.payload?.shipment?.id === op.payload?.shipment?.id;
     if (op.action === 'saveCard')   return o.payload?.card?.id === op.payload?.card?.id;
+    if (op.action === 'rename')     return o.payload?.oldId === op.payload?.oldId;
     return false;
   };
   const filtered = q.filter(o => !sameTarget(o));
@@ -785,6 +786,19 @@ function cloudDelete(id) {
   cloudCall('delete', { id })
     .then(() => { if (readQueue().length === 0) setSyncStatus('online'); else drainQueue(); })
     .catch(() => { enqueueOp({ action: 'delete', id }); });
+}
+
+function cloudRename(oldId, newId) {
+  if (!cloudEnabled()) return;
+  const payload = { oldId, newId };
+  if (!isOnline()) { enqueueOp({ action: 'rename', payload }); return; }
+  setSyncStatus('syncing');
+  cloudCall('rename', { payload })
+    .then(() => { if (readQueue().length === 0) setSyncStatus('online'); else drainQueue(); })
+    .catch((e) => {
+      console.error('rename failed', e);
+      enqueueOp({ action: 'rename', payload });
+    });
 }
 
 /* ============ Storage (localStorage = source of truth สำหรับ runtime; cloud = sync target) ============ */
@@ -1365,6 +1379,7 @@ function render() {
     if (!state.view || state.view === 'owner-dashboard') return renderOwnerDashboard();
     if (state.view === 'owner-new') return renderOwnerNew();
     if (state.view === 'owner-detail') return renderOwnerDetail();
+    if (state.view === 'owner-edit-header') return renderEditHeader();
     if (state.view === 'owner-step-a') return renderStepA();
     if (state.view === 'owner-step-b') return renderStepB();
     if (state.view === 'owner-step-c') return renderStepC();
@@ -1858,7 +1873,10 @@ function renderOwnerDetail() {
     <div class="detail-header">
       <div class="id-row">
         <h2>${s.id}</h2>
-        <span class="badge" style="background:${info.bg};color:${info.color}">${info.label}</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="badge" style="background:${info.bg};color:${info.color}">${info.label}</span>
+          <button class="step-action" style="border:none;cursor:pointer" onclick="gotoStep('owner-edit-header')" title="แก้ไขข้อมูลหลัก">✎ แก้ไข</button>
+        </div>
       </div>
       <div class="info-grid">
         <div class="info-item">
@@ -2018,6 +2036,134 @@ function confirmDelete(id) {
     state.currentId = null;
     render();
   }, 'ยืนยัน', 'btn-danger');
+}
+
+/* ============ Quick edit: header (container ID + order date + carrier) ============ */
+function renderEditHeader() {
+  const s = getShipment(state.currentId);
+  if (!s) { back(); return; }
+  renderTopbar('แก้ไขข้อมูลหลัก');
+  const c = s.stepC || {};
+  document.getElementById('main').innerHTML = `
+    <div class="form-section">
+      <h3>📦 หมายเลขตู้ / Container No.</h3>
+      <div class="field">
+        <label>Container No. <span class="req">*</span></label>
+        <input type="text" id="edit-id"
+          value="${escapeHtml(s.id || '')}"
+          style="font-weight:600;color:var(--primary);text-transform:uppercase"
+          oninput="this.value=this.value.toUpperCase()">
+        <div class="field-hint">เปลี่ยนได้ — ระบบจะ rename row ใน Sheet และโฟลเดอร์รูปใน Drive อัตโนมัติ</div>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h3>📅 ข้อมูลคำสั่งซื้อ</h3>
+      <div class="field">
+        <label>วันที่สั่งซื้อ <span class="req">*</span></label>
+        <input type="date" id="edit-orderDate" value="${s.stepA?.orderDate || todayISO()}">
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h3>🚛 ขนส่ง</h3>
+      <div class="field">
+        <label>เลือกขนส่ง</label>
+        <div class="radio-group">
+          <label class="radio-card ${c.carrier === 'TPI' ? 'selected' : ''}" id="r-TPI" onclick="selectCarrier('TPI')">
+            <input type="radio" name="carrier" value="TPI" ${c.carrier === 'TPI' ? 'checked' : ''}> TPI
+          </label>
+          <label class="radio-card ${c.carrier === 'NEXT' ? 'selected' : ''}" id="r-NEXT" onclick="selectCarrier('NEXT')">
+            <input type="radio" name="carrier" value="NEXT" ${c.carrier === 'NEXT' ? 'checked' : ''}> NEXT
+          </label>
+        </div>
+        <div class="field-hint">เว้นว่างได้ ถ้ายังไม่ทราบขนส่ง</div>
+      </div>
+      <div class="field" id="tpi-mode-field" style="display:${c.carrier === 'TPI' ? 'block' : 'none'}">
+        <label>ประเภทการขนส่ง TPI</label>
+        <div class="radio-group">
+          <label class="radio-card ${c.transportMode === 'land' ? 'selected' : ''}" id="r-land" onclick="selectTransportMode('land')">
+            <input type="radio" name="transportMode" value="land" ${c.transportMode === 'land' ? 'checked' : ''}> 🚛 ทางรถ
+          </label>
+          <label class="radio-card ${c.transportMode === 'sea' ? 'selected' : ''}" id="r-sea" onclick="selectTransportMode('sea')">
+            <input type="radio" name="transportMode" value="sea" ${c.transportMode === 'sea' ? 'checked' : ''}> 🚢 ทางเรือ
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-section" style="background:var(--primary-50);color:var(--text-secondary);font-size:13px">
+      💡 แก้ไขรายการสินค้า / จำนวน SKU ที่ Step A · แก้น้ำหนัก/กล่อง/ปริมาตร ที่ Step C/F
+    </div>
+  `;
+  renderBottomBar(`
+    <button class="btn btn-secondary" onclick="back()">ยกเลิก</button>
+    <button class="btn btn-primary" onclick="saveHeaderEdits()">💾 บันทึก</button>
+  `);
+}
+
+async function saveHeaderEdits() {
+  const oldId = state.currentId;
+  const all = loadShipments();
+  const idx = all.findIndex(x => x.id === oldId);
+  if (idx === -1) { toast('ไม่พบ Shipment', 'error'); return; }
+
+  const newIdRaw = (document.getElementById('edit-id').value || '').trim().toUpperCase();
+  const orderDate = document.getElementById('edit-orderDate').value;
+  const carrierEl = document.querySelector('input[name="carrier"]:checked');
+  const transportEl = document.querySelector('input[name="transportMode"]:checked');
+
+  if (!newIdRaw) { toast('กรุณาใส่ Container No.', 'error'); return; }
+  if (!orderDate) { toast('กรุณาเลือกวันสั่งซื้อ', 'error'); return; }
+  const carrier = carrierEl ? carrierEl.value : '';
+  if (carrier === 'TPI' && !transportEl) { toast('กรุณาเลือกทางรถหรือทางเรือ', 'error'); return; }
+
+  const renaming = newIdRaw !== oldId;
+  if (renaming && all.some(x => x.id === newIdRaw)) {
+    toast('Container No. นี้มีอยู่แล้ว', 'error'); return;
+  }
+
+  const s = all[idx];
+  s.id = newIdRaw;
+  s.containerNo = newIdRaw;
+  s.updatedAt = new Date().toISOString();
+  s.stepA = Object.assign({}, s.stepA || { items: [], exchangeRate: 0 }, { orderDate, completed: true });
+  if (carrier) {
+    s.stepC = Object.assign({}, s.stepC || {}, {
+      carrier,
+      transportMode: carrier === 'TPI' ? (transportEl ? transportEl.value : null) : null
+    });
+    if (s.stepC.completed == null) s.stepC.completed = false;
+  } else if (s.stepC) {
+    s.stepC = Object.assign({}, s.stepC, { carrier: '', transportMode: null });
+  }
+
+  if (!saveShipmentsLocal(all)) return;
+  if (renaming) state.currentId = newIdRaw;
+
+  // rename must complete on the server before save, otherwise save could insert
+  // a fresh newId row and the rename then fails on the duplicate-id guard
+  if (renaming && cloudEnabled() && isOnline()) {
+    setSyncStatus('syncing');
+    try {
+      await cloudCall('rename', { payload: { oldId, newId: newIdRaw } });
+    } catch (e) {
+      console.error('rename failed', e);
+      // queue rename + skip push (push would create duplicate row on server)
+      enqueueOp({ action: 'rename', payload: { oldId, newId: newIdRaw } });
+      toast('rename เข้าคิว — จะ sync เมื่อกลับมาออนไลน์', 'error');
+      state.view = 'owner-detail';
+      render();
+      return;
+    }
+  } else if (renaming) {
+    cloudRename(oldId, newIdRaw);  // offline path — enqueue
+  }
+  cloudPush(s);
+
+  toast('บันทึกเรียบร้อย ✓', 'success');
+  state.view = 'owner-detail';
+  render();
 }
 
 /* ============ Step A (edit) ============ */

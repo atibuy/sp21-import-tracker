@@ -152,6 +152,7 @@ function handle(req) {
     if (req.action === 'list')            return json({ ok: true, data: listShipments() });
     if (req.action === 'save')            return json({ ok: true, data: upsertShipment(req.payload) });
     if (req.action === 'delete')          return json({ ok: true, data: deleteShipmentById(req.id) });
+    if (req.action === 'rename')          return json({ ok: true, data: renameShipment(req.payload) });
     if (req.action === 'init')            return json({ ok: true, data: initSheets() });
     if (req.action === 'ping')            return json({ ok: true, data: 'pong' });
     if (req.action === 'uploadPhoto')     return json({ ok: true, data: uploadPhoto(req.payload) });
@@ -915,6 +916,89 @@ function deleteCardById(id) {
       try { DriveApp.getFileById(fid).setTrashed(true); } catch (e) { /* ignore */ }
     });
     return id;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* ================ Rename ================ */
+
+// เปลี่ยน id ของ Shipment (TEMP-001 → YWC01.15A-TH ฯลฯ)
+// อัปเดต: Shipments row (id + containerNo + raw_json), shipmentId ใน Items/Costs/Photos,
+// และ rename Google Drive folder SP21/<old> → SP21/<new>
+function renameShipment(payload) {
+  if (!payload || !payload.oldId || !payload.newId) throw new Error('oldId, newId required');
+  const oldId = String(payload.oldId).trim();
+  const newId = String(payload.newId).trim();
+  if (!newId) throw new Error('newId is empty');
+  if (oldId === newId) return { renamed: false, reason: 'same-id' };
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const shipSheet = getOrCreateSheet(SHEET_SHIPMENTS, SHIPMENT_COLS);
+    const idIdx = SHIPMENT_COLS.indexOf('id');
+    const cIdx = SHIPMENT_COLS.indexOf('containerNo');
+    const rawIdx = SHIPMENT_COLS.indexOf('raw_json');
+    const uIdx = SHIPMENT_COLS.indexOf('updatedAt');
+
+    let foundRow = -1;
+    let oldContainerNo = '';
+    if (shipSheet.getLastRow() >= 2) {
+      const all = shipSheet.getRange(2, 1, shipSheet.getLastRow() - 1, SHIPMENT_COLS.length).getValues();
+      for (let i = 0; i < all.length; i++) {
+        const rowId = String(all[i][idIdx]);
+        if (rowId === newId) throw new Error('ID นี้มีอยู่แล้ว: ' + newId);
+        if (rowId === oldId) { foundRow = i; oldContainerNo = String(all[i][cIdx] || rowId); }
+      }
+    }
+    if (foundRow === -1) throw new Error('ไม่พบ Shipment: ' + oldId);
+
+    // 1) update Shipments row in-place
+    const rowRange = shipSheet.getRange(foundRow + 2, 1, 1, SHIPMENT_COLS.length);
+    const row = rowRange.getValues()[0];
+    row[idIdx] = newId;
+    row[cIdx] = newId;
+    if (uIdx >= 0) row[uIdx] = new Date().toISOString();
+    if (rawIdx >= 0 && row[rawIdx]) {
+      try {
+        const parsed = JSON.parse(row[rawIdx]);
+        parsed.id = newId;
+        parsed.containerNo = newId;
+        parsed.updatedAt = new Date().toISOString();
+        row[rawIdx] = JSON.stringify(parsed);
+      } catch (e) { /* leave raw_json untouched */ }
+    }
+    rowRange.setValues([row]);
+
+    // 2) update shipmentId in Items / Costs / Photos (always column 1)
+    [SHEET_ITEMS, SHEET_COSTS, SHEET_PHOTOS].forEach(function (name) {
+      const sheet = ss().getSheetByName(name);
+      if (!sheet || sheet.getLastRow() < 2) return;
+      const ids = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+      for (let i = 0; i < ids.length; i++) {
+        if (String(ids[i][0]) === oldId) sheet.getRange(i + 2, 1).setValue(newId);
+      }
+    });
+
+    // 3) rename Drive folder SP21/<oldContainerNo> → SP21/<newId>
+    //    (ใช้ setName — ไฟล์ในโฟลเดอร์อยู่กับที่ fileId เดิม ลิงก์ภาพไม่เปลี่ยน)
+    let folderRenamed = false;
+    if (oldContainerNo) {
+      try {
+        const rootIt = DriveApp.getRootFolder().getFoldersByName(DRIVE_ROOT_FOLDER);
+        if (rootIt.hasNext()) {
+          const sp21 = rootIt.next();
+          const subIt = sp21.getFoldersByName(sanitizeFolderName(oldContainerNo));
+          if (subIt.hasNext()) {
+            subIt.next().setName(sanitizeFolderName(newId));
+            folderRenamed = true;
+          }
+        }
+      } catch (e) { /* best-effort */ }
+    }
+
+    return { renamed: true, oldId: oldId, newId: newId, folderRenamed: folderRenamed };
   } finally {
     lock.releaseLock();
   }
