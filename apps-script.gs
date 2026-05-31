@@ -926,6 +926,11 @@ function deleteCardById(id) {
 // เปลี่ยน id ของ Shipment (TEMP-001 → YWC01.15A-TH ฯลฯ)
 // อัปเดต: Shipments row (id + containerNo + raw_json), shipmentId ใน Items/Costs/Photos,
 // และ rename Google Drive folder SP21/<old> → SP21/<new>
+//
+// Idempotent / self-healing:
+//  - ถ้ามีทั้ง oldId และ newId อยู่บน sheet (เช่น save(oldId) ค้างใน queue ถูก flush
+//    หลัง rename ทำให้เกิด row oldId ซ้ำ) จะลบ row oldId ทิ้ง คงไว้เฉพาะ newId
+//  - ถ้าไม่มี oldId แต่มี newId แล้ว ถือว่า rename ทำไปแล้ว return success ไม่ throw
 function renameShipment(payload) {
   if (!payload || !payload.oldId || !payload.newId) throw new Error('oldId, newId required');
   const oldId = String(payload.oldId).trim();
@@ -942,20 +947,43 @@ function renameShipment(payload) {
     const rawIdx = SHIPMENT_COLS.indexOf('raw_json');
     const uIdx = SHIPMENT_COLS.indexOf('updatedAt');
 
-    let foundRow = -1;
+    let oldRow = -1;
+    let newRow = -1;
     let oldContainerNo = '';
     if (shipSheet.getLastRow() >= 2) {
       const all = shipSheet.getRange(2, 1, shipSheet.getLastRow() - 1, SHIPMENT_COLS.length).getValues();
       for (let i = 0; i < all.length; i++) {
         const rowId = String(all[i][idIdx]);
-        if (rowId === newId) throw new Error('ID นี้มีอยู่แล้ว: ' + newId);
-        if (rowId === oldId) { foundRow = i; oldContainerNo = String(all[i][cIdx] || rowId); }
+        if (rowId === newId) newRow = i;
+        if (rowId === oldId) { oldRow = i; oldContainerNo = String(all[i][cIdx] || rowId); }
       }
     }
-    if (foundRow === -1) throw new Error('ไม่พบ Shipment: ' + oldId);
 
+    // Case 1: ทั้ง oldId และ newId มีอยู่ → row oldId เป็น duplicate ที่ตกค้าง ลบทิ้ง
+    if (oldRow !== -1 && newRow !== -1) {
+      shipSheet.deleteRow(oldRow + 2);
+      // ลบ rows ที่อ้างถึง oldId ใน Items/Costs/Photos ด้วย (row newId มี references ของตัวเองอยู่แล้ว)
+      [SHEET_ITEMS, SHEET_COSTS, SHEET_PHOTOS].forEach(function (name) {
+        const sheet = ss().getSheetByName(name);
+        if (!sheet || sheet.getLastRow() < 2) return;
+        const ids = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+        for (let i = ids.length - 1; i >= 0; i--) {
+          if (String(ids[i][0]) === oldId) sheet.deleteRow(i + 2);
+        }
+      });
+      return { renamed: true, oldId: oldId, newId: newId, dedupedDuplicate: true };
+    }
+
+    // Case 2: oldId หายไปแล้ว มีแต่ newId → rename ทำไปแล้ว
+    if (oldRow === -1 && newRow !== -1) {
+      return { renamed: false, reason: 'already-renamed', newId: newId };
+    }
+
+    if (oldRow === -1) throw new Error('ไม่พบ Shipment: ' + oldId);
+
+    // Case 3: เคสปกติ — มีแค่ oldId ทำ rename
     // 1) update Shipments row in-place
-    const rowRange = shipSheet.getRange(foundRow + 2, 1, 1, SHIPMENT_COLS.length);
+    const rowRange = shipSheet.getRange(oldRow + 2, 1, 1, SHIPMENT_COLS.length);
     const row = rowRange.getValues()[0];
     row[idIdx] = newId;
     row[cIdx] = newId;

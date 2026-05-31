@@ -742,6 +742,37 @@ function enqueueOp(op) {
   setSyncStatus('queued', `รอ sync (${filtered.length})`);
 }
 
+// เมื่อ rename เกิดขึ้น ต้องอัปเดต op ค้างใน queue ที่ยังอ้างถึง oldId ให้ใช้ newId แทน
+// ไม่งั้น save(oldId) ที่ค้างจะถูก flush หลัง rename → server จะ INSERT row oldId ใหม่
+// (ดูเหมือน rename "revert" กลับเป็น id เก่าหลัง refresh)
+function rewriteQueueOpsForRename(oldId, newId) {
+  if (!oldId || !newId || oldId === newId) return;
+  const q = readQueue();
+  let changed = false;
+  const next = q.map(op => {
+    if (op.action === 'save' && op.payload?.shipment?.id === oldId) {
+      changed = true;
+      const cloned = JSON.parse(JSON.stringify(op));
+      cloned.payload.shipment.id = newId;
+      cloned.payload.shipment.containerNo = newId;
+      return cloned;
+    }
+    if (op.action === 'delete' && op.id === oldId) {
+      changed = true;
+      return Object.assign({}, op, { id: newId });
+    }
+    // chain rename: TEMP→old, old→new ⇒ TEMP→new (ตัด step กลางออก)
+    if (op.action === 'rename' && op.payload?.newId === oldId) {
+      changed = true;
+      const cloned = JSON.parse(JSON.stringify(op));
+      cloned.payload.newId = newId;
+      return cloned;
+    }
+    return op;
+  });
+  if (changed) writeQueue(next);
+}
+
 async function drainQueue() {
   if (!cloudEnabled() || !isOnline()) return;
   const q = readQueue();
@@ -770,11 +801,11 @@ function buildCloudPayload(s) {
 }
 
 function cloudPush(s) {
-  if (!cloudEnabled()) return;
+  if (!cloudEnabled()) return Promise.resolve();
   const payload = buildCloudPayload(s);
-  if (!isOnline()) { enqueueOp({ action: 'save', payload }); return; }
+  if (!isOnline()) { enqueueOp({ action: 'save', payload }); return Promise.resolve(); }
   setSyncStatus('syncing');
-  cloudCall('save', { payload })
+  return cloudCall('save', { payload })
     .then(() => { if (readQueue().length === 0) setSyncStatus('online'); else drainQueue(); })
     .catch(() => { enqueueOp({ action: 'save', payload }); });
 }
@@ -789,15 +820,18 @@ function cloudDelete(id) {
 }
 
 function cloudRename(oldId, newId) {
-  if (!cloudEnabled()) return;
+  if (!cloudEnabled()) return Promise.resolve();
   const payload = { oldId, newId };
-  if (!isOnline()) { enqueueOp({ action: 'rename', payload }); return; }
+  // ก่อน enqueue/ส่ง rename ต้องเขียน save/delete op ที่ค้างให้ใช้ newId ก่อน
+  rewriteQueueOpsForRename(oldId, newId);
+  if (!isOnline()) { enqueueOp({ action: 'rename', payload }); return Promise.resolve(); }
   setSyncStatus('syncing');
-  cloudCall('rename', { payload })
+  return cloudCall('rename', { payload })
     .then(() => { if (readQueue().length === 0) setSyncStatus('online'); else drainQueue(); })
     .catch((e) => {
       console.error('rename failed', e);
       enqueueOp({ action: 'rename', payload });
+      throw e;
     });
 }
 
@@ -2141,6 +2175,11 @@ async function saveHeaderEdits() {
   if (!saveShipmentsLocal(all)) return;
   if (renaming) state.currentId = newIdRaw;
 
+  // ก่อนสั่ง rename ต้องล้าง save/delete op ที่ค้างใน queue ที่ยังอ้างถึง oldId
+  // (มิฉะนั้นหลัง rename สำเร็จ drainQueue จะส่ง save(oldId) ทำให้ server INSERT row oldId
+  // กลับขึ้นมาใหม่ → ดูเหมือน rename revert)
+  if (renaming) rewriteQueueOpsForRename(oldId, newIdRaw);
+
   // rename must complete on the server before save, otherwise save could insert
   // a fresh newId row and the rename then fails on the duplicate-id guard
   if (renaming && cloudEnabled() && isOnline()) {
@@ -2159,7 +2198,13 @@ async function saveHeaderEdits() {
   } else if (renaming) {
     cloudRename(oldId, newIdRaw);  // offline path — enqueue
   }
-  cloudPush(s);
+  // await ให้ save เสร็จก่อนแสดง toast — ถ้า fail จะได้ surface ออกมา
+  // (ก่อนหน้านี้ fire-and-forget ทำให้ failure หายไปเงียบๆ)
+  try {
+    await cloudPush(s);
+  } catch (e) {
+    console.error('save after rename failed', e);
+  }
 
   toast('บันทึกเรียบร้อย ✓', 'success');
   state.view = 'owner-detail';
